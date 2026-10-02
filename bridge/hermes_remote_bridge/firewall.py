@@ -1,8 +1,8 @@
 """Open the bridge port on the host firewall, after asking.
 
 The bridge binds the Wi-Fi address only on trusted networks, so allowing the port from private
-ranges does not expose it elsewhere. Changes go through pkexec (one polkit password prompt) and
-are never made silently.
+ranges does not expose it elsewhere. Changes go through pkexec on Linux (one polkit password
+prompt) or an elevated PowerShell on Windows (one UAC prompt), and are never made silently.
 """
 from __future__ import annotations
 
@@ -12,13 +12,15 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .host import host
+
 PRIVATE_RANGES = ("192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12")
 COMMENT = "Hermes Mobile Remote"
 
 
 @dataclass
 class FirewallState:
-    kind: str  # "ufw", "firewalld", "none" or "unknown"
+    kind: str  # "ufw", "firewalld", "windows", "none" or "unknown"
     active: bool
     port_open: bool | None  # None: can't tell without root
 
@@ -54,7 +56,16 @@ def _firewalld_state(port: int) -> FirewallState:
     return FirewallState("firewalld", True, open_)
 
 
+def _windows_state(port: int) -> FirewallState:
+    h = host()
+    if not h.firewall_active():
+        return FirewallState("windows", False, None)
+    return FirewallState("windows", True, h.firewall_rule_present(port))
+
+
 def state(port: int) -> FirewallState:
+    if host().name == "windows":
+        return _windows_state(port)
     if shutil.which("ufw") and Path("/etc/ufw/ufw.conf").exists():
         s = _ufw_state(port)
         if s.active:
@@ -80,12 +91,18 @@ def open_commands(kind: str, port: int) -> list[list[str]]:
                  f'rule family="ipv4" source address="{r}" port port="{port}" protocol="tcp" accept']
                 for r in PRIVATE_RANGES]
         return cmds + [["firewall-cmd", "--reload"]]
+    if kind == "windows":
+        return [["New-NetFirewallRule", "-DisplayName", f"'{COMMENT}'", "-Direction", "Inbound", "-Action", "Allow",
+                 "-Protocol", "TCP", "-LocalPort", str(port), "-Profile", "Private",
+                 "-RemoteAddress", ",".join(PRIVATE_RANGES)]]
     return []
 
 
 def open_port(kind: str, port: int) -> bool:
-    """Run :func:`open_commands` as root via one pkexec prompt. Returns True on success."""
+    """Run :func:`open_commands` with elevated rights (pkexec / UAC). Returns True on success."""
     cmds = open_commands(kind, port)
+    if kind == "windows":
+        return bool(cmds) and host().run_elevated("\n".join(" ".join(c) for c in cmds))
     if not cmds or not shutil.which("pkexec"):
         return False
     script = " && ".join(" ".join(_quote(a) for a in c) for c in cmds)

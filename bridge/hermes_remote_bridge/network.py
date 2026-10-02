@@ -4,7 +4,7 @@ The bridge only serves the local network on networks the user marked as trusted 
 Anywhere else (a cafe, a hotel) it stays on loopback + Tailscale, because a shared Wi-Fi is
 exactly where an unknown device may sit on the address the phone remembers.
 
-A network is identified by the NetworkManager connection profile *and* the gateway's MAC
+A network is identified by the OS's connection profile *and* the gateway's MAC
 address. The profile alone is an SSID + password; the gateway MAC ties trust to the physical
 router, so a hotspot that copies the SSID does not inherit it.
 """
@@ -13,12 +13,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
-import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from .host import host
 from .tailnet import _default_route_ips, _interface_ips, is_private_lan_ip
 
 
@@ -32,44 +31,17 @@ class Network:
 
 def _default_route() -> tuple[str, str] | None:
     """(interface, gateway IP) of the IPv4 default route with the lowest metric."""
-    best: tuple[int, str, str] | None = None
-    try:
-        for line in Path("/proc/net/route").read_text().splitlines()[1:]:
-            f = line.split()
-            if len(f) < 7 or f[1] != "00000000":
-                continue
-            gw = ".".join(str(b) for b in bytes.fromhex(f[2])[::-1])
-            metric = int(f[6])
-            if best is None or metric < best[0]:
-                best = (metric, f[0], gw)
-    except (OSError, ValueError):
-        return None
-    return (best[1], best[2]) if best else None
+    return host().default_route()
 
 
 def _gateway_mac(gateway: str) -> str | None:
-    try:
-        for line in Path("/proc/net/arp").read_text().splitlines()[1:]:
-            f = line.split()
-            if len(f) >= 4 and f[0] == gateway and f[3] != "00:00:00:00:00:00":
-                return f[3].lower()
-    except OSError:
-        pass
-    return None
+    return host().gateway_mac(gateway)
 
 
-def _nm_connection(interface: str) -> tuple[str, str] | None:
-    """(profile UUID, profile name) NetworkManager uses on this interface."""
-    if not shutil.which("nmcli"):
-        return None
-    try:
-        out = subprocess.run(["nmcli", "-t", "-f", "GENERAL.CONNECTION,GENERAL.CON-UUID", "device", "show", interface],
-                             capture_output=True, text=True, timeout=5).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
-    fields = dict(line.split(":", 1) for line in out.splitlines() if ":" in line)
-    uuid, name = fields.get("GENERAL.CON-UUID", ""), fields.get("GENERAL.CONNECTION", "")
-    return (uuid, name) if uuid else None
+def _network_profile(interface: str) -> tuple[str, str] | None:
+    """(profile id, display name) the OS uses for this network: the NetworkManager connection on
+    Linux, the connection profile (the SSID on Wi-Fi) on Windows."""
+    return host().network_profile(interface)
 
 
 def current_network() -> Network | None:
@@ -84,8 +56,8 @@ def current_network() -> Network | None:
     mac = _gateway_mac(gateway)
     if mac is None:
         return None  # identity unknown yet; the watcher retries
-    nm = _nm_connection(interface)
-    profile, name = nm if nm else (interface, interface)
+    found = _network_profile(interface)
+    profile, name = found if found else (interface, interface)
     net_id = hashlib.sha256(f"{profile}|{mac}".encode()).hexdigest()[:16]
     return Network(net_id, name or interface, interface, lan_ips)
 

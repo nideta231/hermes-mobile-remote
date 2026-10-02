@@ -23,6 +23,7 @@ from . import __version__
 from .config import Config
 from .devices import Device, DeviceStore
 from .hermes import HermesClient, HermesError
+from .host import host
 from .runs import RunManager
 from .slash import SlashError, TuiGateway
 from .network import TrustStore, network_info, serving_lan_ips
@@ -118,12 +119,8 @@ def _audit_logger(cfg: Config) -> logging.Logger:
     return logger
 
 
-async def _systemd_user_state(unit: str) -> str:
-    proc = await asyncio.create_subprocess_exec(
-        "systemctl", "--user", "is-active", unit,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-    out, _ = await proc.communicate()
-    return out.decode().strip() or "unknown"
+async def _service_state(unit: str) -> str:
+    return await asyncio.to_thread(host().service_state, unit)
 
 
 async def _tcp_open(host: str, port: int) -> bool:
@@ -338,8 +335,10 @@ def create_app(cfg: Config, *, hermes: HermesClient | None = None, tailnet: Tail
             components["model"] = {"provider": mo.get("provider"), "model": mo.get("model")}
         except HermesError:
             components["model"] = None
-        krdp_state = await _systemd_user_state(cfg.krdp_unit)
-        components["desktop"] = {"status": "ok" if krdp_state == "active" and await _tcp_open("127.0.0.1", cfg.krdp_port)
+        # "unknown" = this OS has no unit to ask (Windows RDP is a built-in service): the open
+        # port is then the whole answer.
+        krdp_state = await _service_state(cfg.krdp_unit)
+        components["desktop"] = {"status": "ok" if krdp_state in ("active", "unknown") and await _tcp_open("127.0.0.1", cfg.krdp_port)
                                  else "down", "unit_state": krdp_state, "port": cfg.krdp_port}
         try:
             ts = await tailnet.status()
@@ -466,22 +465,36 @@ def create_app(cfg: Config, *, hermes: HermesClient | None = None, tailnet: Tail
     async def list_models(_: Device = Depends(device_auth)):
         """Selectable models: authenticated providers only, current one first.
 
-        Hermes marks a provider's unavailable models in `unavailable_models`; those are
-        dropped so the app never offers a model the account cannot run.
+        Hermes marks a provider's unavailable models in `unavailable_models`; those are dropped
+        so the app never offers a model the account cannot run.
+
+        One exception: the provider in use right now is always offered, even if Hermes reports all
+        of its models as unavailable. That happens with Hermes' own provider, where the live model
+        is a private alias rather than anything in the catalog, so the catalog says "unavailable"
+        for all 55 while the alias runs fine. Dropping it would leave the app offering nothing that
+        is actually in use, and point the user at some other provider instead.
         """
         raw = (await hermes.request("GET", "/api/model/options", ok=(200,))).json()
         providers = []
         for p in raw.get("providers", []):
             if not p.get("authenticated") or not p.get("models"):
                 continue
+            is_current = bool(p.get("is_current"))
             blocked = set(p.get("unavailable_models") or ())
             models = [m for m in p["models"] if m not in blocked]
+            if not models and is_current:
+                # Keep the group so the current model stays selectable; the app shows the live
+                # alias from `current` rather than this list.
+                models = list(p["models"])[:1]
+                blocked.discard(models[0])
             if not models:
                 continue
             featured = [m for m in (p.get("featured_models") or ()) if m in models]
+            if is_current and raw.get("model") not in featured:
+                featured.insert(0, raw.get("model"))
             providers.append({
                 "slug": p["slug"], "name": p.get("name") or p["slug"],
-                "current": bool(p.get("is_current")),
+                "current": is_current,
                 "default": p.get("source") == "virtual" and len(models) == 1,
                 "models": models, "featured": featured,
                 "capabilities": {m: p.get("capabilities", {}).get(m) for m in featured},

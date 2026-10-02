@@ -105,7 +105,8 @@ def test_device_file_stores_only_hash(env):
     cfg, _, token, _, _ = env
     text = cfg.devices_file.read_text()
     assert token not in text
-    assert oct(os.stat(cfg.devices_file).st_mode & 0o777) == "0o600"
+    if os.name == "posix":  # Windows has no mode bits; the user-profile ACL applies
+        assert oct(os.stat(cfg.devices_file).st_mode & 0o777) == "0o600"
 
 
 def test_body_limit_and_validation(env):
@@ -158,6 +159,29 @@ CATALOG = {
          "models": [], "unavailable_models": [], "featured_models": []},
     ],
 }
+
+
+def test_current_provider_survives_every_model_being_unavailable(tmp_path):
+    """Hermes' own provider can report all its models unavailable while a private alias runs.
+
+    The app must still be able to see (and keep using) the provider it is actually on.
+    """
+    raw = {"model": "stealth/space-bunny-alpha", "provider": "nous",
+           "providers": [{"slug": "nous", "name": "Nous", "is_current": True, "authenticated": True,
+                          "source": "hermes", "models": ["a/b", "c/d"],
+                          "unavailable_models": ["a/b", "c/d"], "featured_models": ["a/b"]}]}
+    cfg = Config(devices_file=tmp_path / "d.json", audit_log=tmp_path / "a.log")
+    store = DeviceStore(cfg.devices_file)
+    _, token = store.pair("phone")
+    app = create_app(cfg, hermes=FakeHermes({("GET", "/api/model/options"): raw}),
+                     tailnet=FakeTailnet({"100.64.0.10": "me@example.com"}), devices=store,
+                     owner_login="me@example.com")
+    body = client(app, "100.64.0.10").get("/v1/models",
+                                          headers={"Authorization": f"Bearer {token}"}).json()
+    nous = [p for p in body["providers"] if p["slug"] == "nous"][0]
+    assert body["current"] == {"model": "stealth/space-bunny-alpha", "provider": "nous"}
+    assert nous["current"] and nous["models"], "the provider in use must still be offered"
+    assert nous["featured"][0] == "stealth/space-bunny-alpha"
 
 
 def test_model_catalog_filters_unavailable_and_unauthenticated(tmp_path):
@@ -376,7 +400,8 @@ def test_untrusted_network_serves_no_lan(tmp_path, monkeypatch):
     trust.trust(cafe)
     assert network.serving_lan_ips(True, trust) == ["10.0.0.7"]
     assert network.serving_lan_ips(False, trust) == []  # lan off overrides trust
-    assert oct((tmp_path / "n.json").stat().st_mode & 0o777) == "0o600"
+    if os.name == "posix":
+        assert oct((tmp_path / "n.json").stat().st_mode & 0o777) == "0o600"
     trust.untrust("cafe0001")
     assert network.serving_lan_ips(True, trust) == []
 
@@ -385,7 +410,7 @@ def test_same_ssid_behind_a_different_router_is_a_different_network(monkeypatch)
     from hermes_remote_bridge import network
     monkeypatch.setattr(network, "_default_route", lambda: ("wlan0", "192.168.1.1"))
     monkeypatch.setattr(network, "_interface_ips", lambda: {"wlan0": ["192.168.1.10"]})
-    monkeypatch.setattr(network, "_nm_connection", lambda iface: ("uuid-home", "HomeWiFi"))
+    monkeypatch.setattr(network, "_network_profile", lambda iface: ("uuid-home", "HomeWiFi"))
     monkeypatch.setattr(network, "_gateway_mac", lambda gw: "aa:aa:aa:aa:aa:aa")
     home = network.current_network()
     monkeypatch.setattr(network, "_gateway_mac", lambda gw: "bb:bb:bb:bb:bb:bb")
@@ -399,5 +424,7 @@ def test_tls_identity_is_created_once_with_private_key(tmp_path):
     from hermes_remote_bridge.tls import cert_pin, ensure_identity
     cert, key = ensure_identity(tmp_path / "tls")
     pin = cert_pin(cert)
-    assert len(pin) == 43 and oct(key.stat().st_mode & 0o777) == "0o600"
+    assert len(pin) == 43
+    if os.name == "posix":  # Windows has no mode bits; the profile ACL protects the key
+        assert oct(key.stat().st_mode & 0o777) == "0o600"
     assert cert_pin(ensure_identity(tmp_path / "tls")[0]) == pin  # stable across restarts

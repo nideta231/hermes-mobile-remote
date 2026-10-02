@@ -4,6 +4,9 @@ How to work on this repository: run the tests, build the app, and cut a release.
 
 ## Layout
 
+OS-specific code goes in `bridge/hermes_remote_bridge/host/`, never inline: see
+[PLATFORMS.md](PLATFORMS.md#adding-a-platform).
+
 ```
 android/    Kotlin + Compose app
 bridge/     Python (FastAPI) bridge, packaged as hermes-remote-bridge

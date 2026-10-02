@@ -1,15 +1,23 @@
-"""Tailscale LocalAPI access (unix socket; works without root or operator rights)."""
+"""Tailscale access: the LocalAPI unix socket where there is one, the ``tailscale`` CLI elsewhere.
+
+Both return the same JSON (``tailscale status --json`` is the LocalAPI status document), so the
+rest of the bridge does not care which one answered. Neither needs root or operator rights.
+"""
 from __future__ import annotations
 
+import asyncio
 import ipaddress
+import json
 import socket
-import sys
+import subprocess
 import time
-from pathlib import Path
 
 import httpx
 
-SOCKET = "/run/tailscale/tailscaled.sock"
+from .host import host
+
+# None on Windows and macOS, where tailscaled has no unix socket and the CLI is the way in.
+SOCKET = host().tailscale_socket()
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 _TS_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 
@@ -63,9 +71,9 @@ def local_lan_ips() -> list[str]:
     (nothing but other containers can route there) and they leak into the address list the app
     offers, so keep only the addresses of default-route interfaces.
     """
-    routable = _default_route_ips() if sys.platform.startswith("linux") else None
-    found = [ip for name, ips in _interface_ips().items() for ip in ips] if sys.platform.startswith("linux") else []
-    if routable is not None and found:
+    routable = _default_route_ips()
+    found = [ip for ips in _interface_ips().values() for ip in ips]
+    if routable and found:
         found = [ip for ip in found if ip in routable]
     if not found:
         # Fallback: the address the kernel would pick to reach the internet, which is the LAN
@@ -82,59 +90,56 @@ def local_lan_ips() -> list[str]:
 
 
 def _default_route_ips() -> set[str]:
-    """Addresses of interfaces that carry a default route, read from /proc/net/route."""
-    out: set[str] = set()
-    try:
-        for line in Path("/proc/net/route").read_text().splitlines()[1:]:
-            fields = line.split()
-            if len(fields) > 2 and fields[1] == "00000000":  # destination == default
-                out.update(_interface_ips().get(fields[0], ()))
-    except OSError:
-        return set()
-    return out
+    """Addresses of interfaces that carry a default route (empty when the OS can't say)."""
+    carrying = host().default_route_interfaces()
+    return {ip for name, ips in _interface_ips().items() if name in carrying for ip in ips}
 
 
 def _interface_ips() -> dict[str, list[str]]:
-    """Every interface's IPv4 addresses, keyed by name, via SIOCGIFCONF (no extra dependency)."""
-    import ctypes
-    import fcntl
-    import struct
+    """Every interface's IPv4 addresses, keyed by name."""
+    return host().interface_ips()
 
-    size = 8192
-    names = bytearray(size)
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            request = struct.pack("iL", size, ctypes.addressof(ctypes.c_char.from_buffer(names)))
-            response = fcntl.ioctl(sock.fileno(), 0x8912, request)  # SIOCGIFCONF
-        finally:
-            sock.close()
-    except (OSError, AttributeError, ValueError):
-        return {}
-    out: dict[str, list[str]] = {}
-    step = 40  # struct ifreq on 64-bit Linux: 16-byte name + 24-byte sockaddr
-    for off in range(0, max(0, struct.unpack("iL", response)[0]) - step + 1, step):
-        entry = names[off:off + step]
-        name = bytes(entry[:16]).split(b"\x00")[0].decode(errors="replace")
-        try:
-            packed = socket.inet_ntoa(bytes(entry[20:24]))
-        except OSError:
-            continue
-        if name and packed not in out.setdefault(name, []):
-            out[name].append(packed)
-    return out
+
+def _cli_json(*args: str) -> dict:
+    """Run ``tailscale <args>`` and parse its JSON output; raises when Tailscale isn't reachable."""
+    exe = host().tailscale_cli()
+    if not exe:
+        raise RuntimeError("tailscale CLI not found")
+    result = subprocess.run([exe, *args], capture_output=True, text=True, timeout=8,
+                            creationflags=0x08000000 if host().name == "windows" else 0)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"tailscale exited {result.returncode}")
+    return json.loads(result.stdout)
+
+
+def _self_ips_and_owner(status: dict) -> tuple[list[str], str | None]:
+    ips = list(status["Self"]["TailscaleIPs"])
+    owner = (status.get("User") or {}).get(str(status["Self"]["UserID"]), {}).get("LoginName")
+    return ips, owner
+
+
+def _whois_result(data: dict) -> dict:
+    return {
+        "login": data["UserProfile"]["LoginName"],
+        "node": data["Node"].get("ComputedName") or data["Node"]["Name"],
+        "os": (data["Node"].get("Hostinfo") or {}).get("OS"),
+    }
 
 
 class TailnetClient:
-    def __init__(self, socket_path: str = SOCKET):
-        self._client = httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(uds=socket_path),
-                                         base_url="http://local-tailscaled.sock", timeout=5.0)
+    def __init__(self, socket_path: str | None = SOCKET):
+        self._client = (httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(uds=socket_path),
+                                          base_url="http://local-tailscaled.sock", timeout=5.0)
+                        if socket_path else None)
         self._whois_cache: dict[str, tuple[float, dict | None]] = {}
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        if self._client:
+            await self._client.aclose()
 
     async def status(self) -> dict:
+        if self._client is None:
+            return await asyncio.to_thread(_cli_json, "status", "--json")
         resp = await self._client.get("/localapi/v0/status")
         resp.raise_for_status()
         return resp.json()
@@ -150,26 +155,23 @@ class TailnetClient:
             return cached[1]
         result = None
         try:
-            host = f"[{addr}]" if ":" in addr else addr
-            resp = await self._client.get("/localapi/v0/whois", params={"addr": f"{host}:1"})
-            if resp.status_code == 200:
-                data = resp.json()
-                result = {
-                    "login": data["UserProfile"]["LoginName"],
-                    "node": data["Node"].get("ComputedName") or data["Node"]["Name"],
-                    "os": (data["Node"].get("Hostinfo") or {}).get("OS"),
-                }
-        except (httpx.HTTPError, KeyError, ValueError):
+            if self._client is None:
+                result = _whois_result(await asyncio.to_thread(_cli_json, "whois", "--json", addr))
+            else:
+                host_part = f"[{addr}]" if ":" in addr else addr
+                resp = await self._client.get("/localapi/v0/whois", params={"addr": f"{host_part}:1"})
+                if resp.status_code == 200:
+                    result = _whois_result(resp.json())
+        except (httpx.HTTPError, KeyError, ValueError, RuntimeError, OSError, subprocess.SubprocessError):
             result = None
         self._whois_cache[addr] = (now, result)
         return result
 
 
-def sync_tailscale_ips(socket_path: str = SOCKET) -> tuple[list[str], str | None]:
+def sync_tailscale_ips(socket_path: str | None = SOCKET) -> tuple[list[str], str | None]:
     """Startup helper: this node's Tailscale IPs and the owner's login name."""
+    if not socket_path:
+        return _self_ips_and_owner(_cli_json("status", "--json"))
     with httpx.Client(transport=httpx.HTTPTransport(uds=socket_path),
                       base_url="http://local-tailscaled.sock", timeout=5.0) as client:
-        status = client.get("/localapi/v0/status").raise_for_status().json()
-        ips = list(status["Self"]["TailscaleIPs"])
-        owner = (status.get("User") or {}).get(str(status["Self"]["UserID"]), {}).get("LoginName")
-        return ips, owner
+        return _self_ips_and_owner(client.get("/localapi/v0/status").raise_for_status().json())

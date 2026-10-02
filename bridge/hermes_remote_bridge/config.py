@@ -5,18 +5,16 @@ runtime, and device tokens are stored only as SHA-256 hashes in devices.json.
 """
 from __future__ import annotations
 
-import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
 
-def _xdg(var: str, fallback: str) -> Path:
-    return Path(os.environ.get(var) or Path.home() / fallback)
+from .host import host
 
-
-CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "hermes-remote"
-STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "hermes-remote"
+# Per-OS locations: XDG on Linux, %LOCALAPPDATA% on Windows (see host/).
+CONFIG_DIR = host().config_dir()
+STATE_DIR = host().state_dir()
 
 
 @dataclass
@@ -33,12 +31,12 @@ class Config:
     # Advertise the bridge over mDNS on trusted networks so the app finds a changed IP.
     mdns: bool = True
     hermes_url: str = "http://127.0.0.1:8642"
-    hermes_env: Path = Path.home() / ".hermes" / ".env"
+    hermes_env: Path = host().hermes_home() / ".env"
     # Hermes CLI, used only to read/write approvals.mode (its own validated config writer).
-    hermes_bin: Path = Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "hermes"
+    hermes_bin: Path = host().hermes_bin()
     # Hermes source checkout and its Python, used to run slash commands in Hermes' TUI gateway.
-    hermes_root: Path = Path.home() / ".hermes" / "hermes-agent"
-    hermes_python: Path = Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "python"
+    hermes_root: Path = host().hermes_root()
+    hermes_python: Path = host().hermes_python()
     # Tailscale login names allowed to connect. Empty means "the owner of this node".
     allowed_logins: list[str] = field(default_factory=list)
     krdp_unit: str = "app-org.kde.krdpserver.service"

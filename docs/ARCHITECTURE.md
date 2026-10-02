@@ -111,9 +111,13 @@ The token is encrypted with an Android Keystore key and excluded from backups. D
 per session. Session history is not cached in full: the app asks for the tail of a session and
 keeps what it has rendered.
 
-## Why the bridge is Linux-only
+## One bridge, one OS layer
 
-Not a design choice so much as an honest one. It uses a systemd *user* service, NetworkManager
-connection profiles and router MAC addresses to decide which network is "yours", Avahi/mDNS for
-discovery, and KDE's KRdp for the desktop hand-off. Each of those is a Linux assumption, and
-pretending otherwise would mean a second implementation.
+The bridge started on Linux and every OS-specific thing it needed (service manager, network
+identity, Tailscale socket, firewall, mDNS, the trust prompt) was written against Linux. Those now
+sit behind one interface in `bridge/hermes_remote_bridge/host/`, with a module per operating
+system. The rest of the code asks the host a question ("which interface has the default route?")
+and never checks the platform, so the security model above is the same code on every OS.
+
+Which operating systems exist, how far each is verified, and how to add one:
+[PLATFORMS.md](PLATFORMS.md).

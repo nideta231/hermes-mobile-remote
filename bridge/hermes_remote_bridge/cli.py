@@ -7,9 +7,7 @@ import ipaddress
 import json
 import logging
 import os
-import shutil
 import socket
-import subprocess
 import sys
 import threading
 import time
@@ -19,6 +17,7 @@ from pathlib import Path
 
 from .config import Config
 from .devices import DeviceStore
+from .host import host
 from .network import TrustStore, current_network, serving_lan_ips
 from .tailnet import sync_tailscale_ips
 from .tls import cert_pin, ensure_identity
@@ -110,6 +109,8 @@ def cmd_serve(cfg: Config, _: argparse.Namespace) -> None:
     log.info("listening on %s%s", ", ".join(f"http://{h}:{cfg.port}" for h in plain),
              "".join(f", https://{h}:{cfg.port}" for h in lan))
     mdns = _advertise(cfg, pin, sorted(lan)) if lan and cfg.mdns else None
+    if lan and cfg.mdns and mdns is None:
+        log.warning("mDNS unavailable on this PC; the app can't follow an IP change by itself")
     if cfg.lan and net and not lan:
         _ask_to_trust(trust, net)
     try:
@@ -119,8 +120,14 @@ def cmd_serve(cfg: Config, _: argparse.Namespace) -> None:
         if mdns:
             mdns.terminate()
     if changed:
-        # Non-zero so systemd (Restart=always) brings us back up on the new addresses.
+        # Non-zero so the service manager (systemd Restart=always, a Scheduled Task's restart
+        # policy) brings us back up on the new addresses.
         raise SystemExit(75)
+
+
+def _listener_closed(sockets) -> bool:
+    """True when any bound listening socket has been closed (its descriptor is gone)."""
+    return any(sock.fileno() == -1 for group in sockets for sock in group)
 
 
 async def _serve_until_network_changes(servers, sockets, cfg: Config, trust: TrustStore,
@@ -134,8 +141,21 @@ async def _serve_until_network_changes(servers, sockets, cfg: Config, trust: Tru
 
     async def watch():
         nonlocal changed
+        tick = 0
         while not any(s.should_exit for s in servers):
-            await asyncio.sleep(5)
+            await asyncio.sleep(1)
+            tick += 1
+            if _listener_closed(sockets):
+                # asyncio on Windows closes a listening socket when one accept() fails (a client
+                # resetting mid-connect is enough). The process would stay up, deaf. Restart.
+                logging.getLogger("hermes_remote_bridge").error(
+                    "a listening socket was closed underneath us; restarting")
+                changed = True
+                for s in servers:
+                    s.should_exit = True
+                return
+            if tick % 5:
+                continue
             now = await asyncio.to_thread(_desired, cfg, trust)
             if now != bound and (now[0] or now[1]):
                 logging.getLogger("hermes_remote_bridge").info(
@@ -154,42 +174,25 @@ async def _serve_until_network_changes(servers, sockets, cfg: Config, trust: Tru
 
 
 def _advertise(cfg: Config, pin: str | None, lan_ips: list[str]):
-    """Announce the bridge over mDNS (Avahi) so the app finds it when the PC's IP changes.
+    """Announce the bridge over mDNS so the app finds it when the PC's IP changes.
 
     The TXT record carries only a short prefix of the certificate pin, so the app can tell its
-    own bridge from another one; the full pin is still checked on the TLS connection.
-
-    Avahi announces on every interface, Docker bridges included, so a resolver can hand the
-    phone an unreachable 172.17.x address. ``ip=`` lists the addresses we actually serve.
+    own bridge from another one; the full pin is still checked on the TLS connection. ``ip=``
+    lists the addresses we actually serve, so a resolver never hands the phone a Docker bridge.
     """
-    if not shutil.which("avahi-publish-service"):
-        logging.getLogger("hermes_remote_bridge").warning("avahi-publish-service missing; no mDNS")
-        return None
-    return subprocess.Popen(
-        ["avahi-publish-service", f"Hermes Remote ({socket.gethostname()})", "_hermesremote._tcp",
-         str(cfg.port), f"pin={(pin or '')[:12]}", f"ip={','.join(lan_ips)}", "v=2"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return host().advertise_mdns(cfg.port, pin, lan_ips)
 
 
 def _ask_to_trust(trust: TrustStore, net) -> None:
-    """Desktop notification: offer to trust the network the PC just joined (once per network)."""
-    if net.id in trust.declined() or not shutil.which("notify-send"):
+    """Desktop prompt: offer to trust the network the PC just joined (once per network)."""
+    if net.id in trust.declined():
         return
 
     def ask():
-        try:
-            out = subprocess.run(
-                ["notify-send", "--app-name=Hermes Remote", "--icon=network-wireless", "--wait",
-                 "--action=trust=Trust this network", "--action=no=Not now",
-                 f"New network: {net.name}",
-                 "Let your phone connect to Hermes over this Wi-Fi without Tailscale? "
-                 "Only for networks you control, like home or office."],
-                capture_output=True, text=True, timeout=600).stdout.strip()
-        except (OSError, subprocess.SubprocessError):
-            return
-        if out == "trust":
+        answer = host().prompt_trust(net.name)
+        if answer == "trust":
             trust.trust(net)  # the watcher sees it and restarts with the LAN listener
-        elif out == "no":
+        elif answer == "no":
             trust.decline(net)
 
     threading.Thread(target=ask, daemon=True).start()
@@ -207,6 +210,62 @@ def _bridge_urls(cfg: Config) -> list[str]:
         raise SystemExit("No trusted local network and no Tailscale: nothing to put in the pairing code. "
                          "Run `hermes-remote-bridge trust` on a network you control, or start Tailscale.")
     return urls
+
+
+def _pairing_warnings(cfg: Config, urls: list[str]) -> list[str]:
+    """Reasons the address in the pairing code may be unreachable from the phone.
+
+    Printed before the QR, because "the app says it cannot reach the PC" is the usual first
+    outcome and it is nearly always one of these two.
+    """
+    from . import firewall
+
+    out: list[str] = []
+    lan = [u for u in urls if u.startswith("https://")]  # LAN entries are HTTPS; tailnet is HTTP
+    if not lan and cfg.lan:
+        out.append("No trusted local network, so the code points at Tailscale only. The phone can "
+                   "only use it with Tailscale installed and logged into the same tailnet.\n"
+                   f"    Fix: hermes-remote-bridge trust   (on your home or office Wi-Fi)")
+    if lan:
+        state = firewall.state(cfg.port)
+        if state.active and state.port_open is False:
+            out.append(f"{state.kind} firewall is blocking TCP {cfg.port}, so nothing on this network "
+                       "can reach the bridge. This is on by default on Windows.\n"
+                       f"    Fix: hermes-remote-bridge firewall   (asks first)")
+        elif state.active and state.port_open is None:
+            out.append(f"{state.kind} firewall is active and I cannot read its rules. If the app cannot "
+                       f"reach the PC, open TCP {cfg.port} from your local network:\n"
+                       f"    Fix: hermes-remote-bridge firewall")
+        out.append("The phone must be on the SAME Wi-Fi as this PC, not on mobile data or a different "
+                   "network. Guest Wi-Fi often blocks device-to-device traffic.")
+    return out
+
+
+def _show_qr(uri: str, cfg: Config) -> bool:
+    """Show the pairing QR. Returns True when it was opened as an image file.
+
+    A terminal QR is drawn with block characters. That works in a Linux terminal, but a Windows
+    console may not have the glyphs (or the code page) and the result is unscannable or an
+    exception, so there it opens as a picture; it is also the fallback if printing fails.
+    """
+    import segno
+
+    qr = segno.make(uri, error="m")
+    if not host().qr_as_image():
+        try:
+            qr.terminal(compact=True)
+            return False
+        except UnicodeEncodeError:
+            pass
+    path = cfg.audit_log.parent / "pairing-qr.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        qr.save(fh, kind="png", scale=8, border=3, dark="#000", light="#fff")
+    if host().open_file(path):
+        return True
+    print(f"Open this picture and scan it: {path}  (delete it afterwards)")
+    return False
 
 
 def cmd_pair(cfg: Config, args: argparse.Namespace) -> None:
@@ -235,10 +294,56 @@ def cmd_pair(cfg: Config, args: argparse.Namespace) -> None:
         print(f"Paired {device.name} ({device.id}); QR written to {args.qr_png} (delete it after scanning)")
         return
     print(f"Paired device {device.name!r} (id {device.id}).")
+    warnings = [] if args.url else _pairing_warnings(cfg, urls)
+    if warnings:
+        print("\nBEFORE you scan, check this:")
+        for w in warnings:
+            print(f"  * {w}")
+        print()
     print("Scan this QR code in the Hermes Remote app. It is shown ONCE; the token is not stored.\n")
-    segno.make(uri, error="m").terminal(compact=True)
+    shown_as_image = _show_qr(uri, cfg)
     print(f"\nManual entry -> URL: {urls[0]}\n                 Token: {token}\n")
+    if shown_as_image:
+        print("The QR code was opened as a picture. Close it and delete it once the app has paired.")
     print(f"Revoke any time: hermes-remote-bridge revoke {device.name!r}")
+    _confirm_reachable(urls[0], cfg)
+
+
+def _confirm_reachable(url: str, cfg: Config) -> None:
+    """Try the address in the pairing code, so a blocked port shows up here and not only on the phone.
+
+    On the LAN this is HTTPS with the bridge's own self-signed certificate, so we load that
+    certificate as the trust anchor instead of the system store: a plain verification failure would
+    be reported as "unreachable" when the port is in fact open.
+    """
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    ctx = ssl.create_default_context()
+    if url.startswith("https://"):
+        # The certificate names no IP and is not signed by anyone, so the app pins its fingerprint
+        # instead of trusting a CA. Check it the same way here, or every healthy bridge looks dead.
+        # check_hostname is off because there is no hostname to match.
+        try:
+            cert_path, _key_path = ensure_identity(cfg.tls_dir)
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_REQUIRED
+            ctx.load_verify_locations(cadata=cert_path.read_text())
+        except (OSError, ssl.SSLError):
+            ctx = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(url + "/v1/me", timeout=5, context=ctx) as r:
+            print(f"Reachable: {url} (HTTP {r.status})")
+            return
+    except urllib.error.HTTPError as exc:
+        # Any HTTP answer means the port is open and something is listening. 401 is correct.
+        print(f"Reachable: {url} (HTTP {exc.code})")
+        return
+    except Exception as exc:  # noqa: BLE001 - the point is to report whatever went wrong
+        print(f"NOT reachable from this PC: {url} ({exc}).")
+        print("  The phone will not reach it either. Run: hermes-remote-bridge doctor")
 
 
 def cmd_revoke(cfg: Config, args: argparse.Namespace) -> None:
@@ -298,17 +403,37 @@ def cmd_firewall(cfg: Config, args: argparse.Namespace) -> None:
         return
     if args.if_needed and s.port_open is None and not sys.stdin.isatty():
         return
-    print(f"{s.kind} is active. To let your phone reach the bridge over Wi-Fi, these rules will be added")
+    print(f"{s.kind} is active. To let your phone reach the bridge over Wi-Fi, this will be added")
     print("(private networks only; the bridge only listens on Wi-Fi you trusted):")
     for c in firewall.open_commands(s.kind, cfg.port):
         print("  " + " ".join(c))
     if not args.yes:
         try:
-            if input("Apply now? You'll be asked for your password. [Y/n] ").strip().lower() not in ("", "y", "yes"):
+            if input("Apply now? You'll be asked for your password"
+                         f"{' (a UAC prompt)' if s.kind == 'windows' else ''}. [Y/n] ").strip().lower() not in ("", "y", "yes"):
                 return
         except EOFError:
             return
     print("Done." if firewall.open_port(s.kind, cfg.port) else "Not applied (cancelled or failed).")
+
+
+def _no_command_help(parser: argparse.ArgumentParser) -> None:
+    """Running the program with nothing after it: say what to type, and don't vanish.
+
+    On Windows people double-click the .exe; without this the window shows an argparse error and
+    closes before it can be read.
+    """
+    print("Hermes Mobile Remote bridge\n")
+    print("This program needs a command after its name. The ones you want most:\n")
+    print("  hermes-remote-bridge pair phone     show a QR code to connect your phone")
+    print("  hermes-remote-bridge doctor         find out why the phone cannot connect")
+    print("  hermes-remote-bridge devices        list paired phones")
+    print("  hermes-remote-bridge trust          trust the Wi-Fi network you are on now")
+    if host().name == "windows":
+        print("\nEasiest: double-click  pair.cmd  in the project folder.")
+    print("\nAll commands: hermes-remote-bridge --help")
+    if host().launched_by_double_click():
+        input("\nPress Enter to close this window...")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -331,6 +456,9 @@ def main(argv: list[str] | None = None) -> None:
     f = sub.add_parser("firewall", help="Allow the bridge port from the local network (asks first)")
     f.add_argument("--yes", action="store_true", help="Don't ask for confirmation")
     f.add_argument("--if-needed", action="store_true", help=argparse.SUPPRESS)
+    if not (argv if argv is not None else sys.argv[1:]):
+        _no_command_help(parser)
+        return
     args = parser.parse_args(argv)
     cfg = Config.load(args.config)
     handler = {"serve": cmd_serve, "pair": cmd_pair, "revoke": cmd_revoke, "devices": cmd_devices,

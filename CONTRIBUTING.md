@@ -41,6 +41,10 @@ gitignored; leave them that way.
 status code, update [`docs/BRIDGE_API.md`](docs/BRIDGE_API.md) in the same commit. The app codes
 against that document, and a silent change breaks installed apps in a way no test here would catch.
 
+**No platform checks outside `host/`.** Do not write `sys.platform`, `os.name` or a hardcoded `/proc`
+path in the bridge. Ask the host object, and add the method to `host/base.py` with a safe default.
+A change that only works on one OS must say so in [docs/PLATFORMS.md](docs/PLATFORMS.md).
+
 **Add a test with the change.** `bridge/tests/` for the bridge, `android/app/src/test/` for the app.
 A bug fix gets a test that fails before it and passes after. The app tests should cover the pure
 logic (`LiveReducer`, `HistoryMapper`, `StatusMapper`, request building) rather than the UI.

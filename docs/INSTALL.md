@@ -4,13 +4,18 @@ Two parts: the bridge on your PC, the app on your phone. The bridge is the part 
 
 ## Requirements
 
+The steps below are for Linux. **Windows** has its own section at the end.
+
 | PC | Phone |
 |---|---|
-| Linux with systemd (developed on KDE Plasma, Arch-based) | Android 8.0+ |
+| Linux with systemd (developed on KDE Plasma, Arch-based), **or** Windows 10/11 (experimental) | Android 8.0+ |
 | [Hermes Agent](https://hermes-agent.nousresearch.com) installed and running | |
-| `git`, `openssl` | |
+| `git` | |
 | [uv](https://docs.astral.sh/uv/) | |
-| Optional: NetworkManager, Avahi (finds the PC when its IP changes), Tailscale | Optional: Tailscale |
+| Optional: Tailscale; on Linux also NetworkManager and Avahi | Optional: Tailscale |
+
+macOS is not supported yet. See [PLATFORMS.md](PLATFORMS.md) for what each OS does and does not
+have.
 
 Hermes' API server has to be reachable on `127.0.0.1:8642`. The installer turns it on if it is
 not already.
@@ -134,3 +139,47 @@ The repository ships a demo stack with a synthetic backend — no keys, no model
 ## If something is wrong
 
 [docs/TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+## Windows
+
+Experimental: see [PLATFORMS.md](PLATFORMS.md#what-is-verified-on-windows) for exactly what is and
+is not verified. Use native Windows, not WSL2.
+
+From a normal (non-admin) Command Prompt or PowerShell window, or by double-clicking `install.cmd`
+in the folder:
+
+```powershell
+git clone https://github.com/nideta231/hermes-mobile-remote.git
+cd hermes-mobile-remote
+install.cmd
+```
+
+Use `install.cmd`, not `install.ps1` directly. A stock Windows refuses unsigned scripts ("running
+scripts is disabled on this system"), and `install.cmd` relaxes that for this one run only, so you
+never touch the account-wide policy. If you downloaded a ZIP instead of cloning, the installer also
+clears the "downloaded from the internet" mark on its scripts. Do not extract the ZIP and then edit
+the execution policy by hand.
+
+If `uv` (the Python package manager the bridge is installed with) is missing, the installer asks
+and installs it for you, with `winget` or the official installer, no admin needed. Pass `-InstallUv`
+(`install.cmd -InstallUv`) to skip the question. It then finds `uv` in the same window, so you do not have to reopen
+PowerShell.
+
+The installer does the same five things as the Linux one:
+
+1. Checks `uv` and Hermes (`%LOCALAPPDATA%\hermes`, or `$env:HERMES_HOME`).
+2. Turns on Hermes' API server with a fresh random key in Hermes' `.env`.
+3. Installs the bridge into `bridge\.venv`.
+4. Registers a Scheduled Task called **Hermes Mobile Remote** that starts at logon and restarts the
+   bridge when the network changes.
+5. Asks whether this is a network you trust, then offers the firewall rule (one UAC prompt, private
+   ranges and the Private profile only).
+
+Then pair the phone: double-click **`pair.cmd`** in the folder (the installer also offers to do it at
+the end). It opens the QR code as a picture, which scans reliably; the Windows console draws block
+characters badly. The `.exe` in `bridge\.venv\Scripts` needs a command after its name, so
+double-clicking *that* only shows a help screen.
+
+Check on it any time with `.\bridge\.venv\Scripts\hermes-remote-bridge.exe doctor`. To remove
+it: `install.cmd -Uninstall` (keeps your paired devices and settings in
+`%LOCALAPPDATA%\hermes-remote`).

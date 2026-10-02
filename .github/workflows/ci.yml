@@ -17,6 +17,149 @@ jobs:
       - run: uv sync
       - run: uv run pytest -q
 
+  # The bridge on Windows: the same tests, then the real PowerShell cmdlets the Windows host calls
+  # and the real installer. A GitHub runner has Ethernet instead of Wi-Fi, but it has a default
+  # route, a gateway and a firewall, which is what these code paths read.
+  bridge-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: bridge
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv sync
+      - run: uv run pytest -q
+      - name: Scripts parse under Windows PowerShell 5.1 (what a stock PC runs)
+        shell: powershell
+        working-directory: .
+        run: |
+          $PSVersionTable.PSVersion
+          foreach ($f in 'install.ps1', 'bridge/windows/run-bridge.ps1') {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errors)
+            if ($errors) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+          }
+          # 5.1 reads a script with no BOM as the ANSI code page; any non-ASCII byte can corrupt it.
+          foreach ($f in 'install.ps1', 'install.cmd', 'bridge/windows/run-bridge.ps1') {
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $f))
+            if ($bytes | Where-Object { $_ -gt 127 }) { Write-Error "$f contains non-ASCII bytes"; exit 1 }
+          }
+      - name: Host probes answer on real Windows
+        shell: pwsh
+        run: |
+          uv run python -c "
+          from hermes_remote_bridge.host import host
+          from hermes_remote_bridge import network
+          h = host(); assert h.name == 'windows', h.name
+          print('interfaces      ', h.interface_ips())
+          route = h.default_route(); print('default route   ', route); assert route, 'no default route'
+          print('gateway mac     ', h.gateway_mac(route[1]))
+          print('profile         ', h.network_profile(route[0]))
+          print('firewall active ', h.firewall_active())
+          print('current network ', network.current_network())
+          print('config dir      ', h.config_dir())
+          "
+      - name: Bridge CLI runs
+        shell: pwsh
+        run: |
+          uv run hermes-remote-bridge devices
+          uv run hermes-remote-bridge trust --list
+          # Doctor exits 1 here (no Hermes on a runner) but must still print; a crash has "error:".
+          $out = uv run hermes-remote-bridge doctor 2>&1 | Out-String
+          Write-Host $out
+          if ($out -match 'Traceback|error:') { exit 1 }
+          exit 0
+      - name: Fresh PC, as a friend would run it (PowerShell 5.1, strict policy, no uv, spaces in the path)
+        shell: powershell
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # A stock PC blocks scripts for the user. install.cmd must cope with that by itself.
+          Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Restricted -Force
+          "policy: " + ((Get-ExecutionPolicy -List | Out-String))
+
+          # Hermes present, uv absent, repo and Hermes home under paths with spaces.
+          $root = Join-Path $env:RUNNER_TEMP 'my hermes remote'
+          New-Item -ItemType Directory -Force $root | Out-Null
+          Copy-Item -Recurse -Force "$PWD\*" $root -Exclude '.git'
+          $env:HERMES_HOME = Join-Path $env:RUNNER_TEMP 'hermes home'
+          New-Item -ItemType Directory -Force $env:HERMES_HOME | Out-Null
+          $uvDir = Split-Path (Get-Command uv).Source
+          $env:Path = ($env:Path -split ';' | Where-Object { $_ -and ($_ -ne $uvDir) }) -join ';'
+          if (Get-Command uv -ErrorAction SilentlyContinue) { throw 'test setup: uv still on PATH' }
+
+          # 1. Plain `powershell -File` is what failed for the first tester: prove it still would
+          #    without the launcher, so this test is actually testing something.
+          # (stderr is the expected output here, so don't let 'Stop' turn it into a crash)
+          $ErrorActionPreference = 'Continue'
+          $plain = (& powershell -NoProfile -File "$root\install.ps1" -Unattended 2>&1 | Out-String)
+          $ErrorActionPreference = 'Stop'
+          if ($plain -notmatch 'running scripts is disabled|cannot be loaded') { throw "expected the policy block, got: $plain" }
+
+          # 2. The launcher gets past it. Answers are piped in so `pause` cannot hang.
+          $out = (cmd /c "echo.| `"$root\install.cmd`" -Unattended" 2>&1 | Out-String)
+          Write-Host $out
+          if ($out -notmatch 'uv is required') { throw 'expected the clear uv-is-required stop' }
+
+          # 3. -InstallUv: installs uv, finds it in-session, installs, starts, and the bridge answers.
+          $out = (cmd /c "echo.| `"$root\install.cmd`" -Unattended -InstallUv" 2>&1 | Out-String)
+          Write-Host $out
+          if ($out -match 'did not start|Error:') { throw 'installer reported a failure' }
+          if ($out -match 'Apply now') { throw '-Unattended must not touch the firewall' }
+          if (Get-NetFirewallRule -DisplayName 'Hermes Mobile Remote' -ErrorAction SilentlyContinue) { throw 'a firewall rule was created unattended' }
+          if ($out -notmatch 'running; starts at every logon') { throw 'installer did not confirm a running bridge' }
+
+          $task = Get-ScheduledTask -TaskName 'Hermes Mobile Remote'
+          "task state: $($task.State)"
+          if ($task.State -ne 'Running') { throw 'task is not running' }
+          $log = "$env:LOCALAPPDATA\hermes-remote\state\bridge.log"
+          Get-Content $log -ErrorAction SilentlyContinue | Select-Object -First 8
+          # The log must be readable text, not UTF-16 (which has NUL bytes between letters).
+          # (the bridge is still writing to it, so open it with sharing allowed)
+          $fs = [System.IO.File]::Open($log, 'Open', 'Read', 'ReadWrite')
+          $buf = New-Object byte[] ([int][Math]::Min($fs.Length, 4096)); [void]$fs.Read($buf, 0, $buf.Length); $fs.Close()
+          if ($buf.Length -eq 0) { throw 'bridge.log is empty' }
+          if ($buf -contains 0) { throw 'bridge.log is not UTF-8' }
+
+          # 3b. What the second tester did: run the .exe with nothing after it. It must explain itself
+          #     and exit cleanly, not print an argparse error.
+          $exe = "$root\bridge\.venv\Scripts\hermes-remote-bridge.exe"
+          $help = (& $exe 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0 -or $help -notmatch 'pair phone' -or $help -notmatch 'pair.cmd') { throw "bare .exe did not explain itself: $help" }
+
+          # 3c. Pairing through the launcher. A runner has no phone, so trust its network to give
+          #     the code an address, then check a real QR picture and manual-entry details come out.
+          & $exe trust | Out-Host
+          $out = (cmd /c "echo.| `"$root\pair.cmd`"" 2>&1 | Out-String)
+          Write-Host ($out -replace 'Token: \S+', 'Token: <hidden>')
+          if ($out -notmatch 'Manual entry' -or $out -notmatch 'hrb_') { throw 'pairing printed no manual-entry details' }
+          if ($out -match 'Pairing failed|Traceback|error:') { throw 'pairing failed' }
+          $png = "$env:LOCALAPPDATA\hermes-remote\state\pairing-qr.png"
+          if (-not (Test-Path $png)) { throw 'no QR picture was written' }
+          if ([System.IO.File]::ReadAllBytes($png)[1..3] -join ',' -ne '80,78,71') { throw 'the QR file is not a PNG' }
+          Remove-Item $png -Force
+
+          # 4. Re-running over a running install is safe (an update).
+          $out = (cmd /c "echo.| `"$root\install.cmd`" -Unattended" 2>&1 | Out-String)
+          if ($out -notmatch 'running; starts at every logon') { throw 'second run did not leave a running bridge' }
+
+          # 5. The bridge must also come back by itself: kill it and the task has to restart it.
+          Get-Process -Name hermes-remote-bridge -ErrorAction SilentlyContinue | Stop-Process -Force
+          $back = $false
+          for ($i = 0; $i -lt 40 -and -not $back; $i++) {
+            Start-Sleep -Seconds 1
+            try { $null = Invoke-WebRequest 'http://127.0.0.1:8650/v1/me' -UseBasicParsing -TimeoutSec 2 }
+            catch { if ($_.Exception.Response) { $back = $true } }
+          }
+          if (-not $back) { throw 'bridge did not come back after being killed' }
+
+          # 6. Uninstall removes the task and leaves no bridge process.
+          $out = (cmd /c "echo.| `"$root\install.cmd`" -Uninstall" 2>&1 | Out-String)
+          Write-Host $out
+          if (Get-ScheduledTask -TaskName 'Hermes Mobile Remote' -ErrorAction SilentlyContinue) { throw 'task still registered' }
+          if (Get-Process -Name hermes-remote-bridge -ErrorAction SilentlyContinue) { throw 'bridge still running' }
+
   android:
     runs-on: ubuntu-latest
     defaults:

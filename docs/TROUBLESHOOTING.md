@@ -5,6 +5,23 @@ worth checking and explains what is wrong. Everything below is a symptom it may 
 
 ## The phone cannot connect at all
 
+On **Windows**, the same checks apply with different commands: `Get-ScheduledTask -TaskName
+'Hermes Mobile Remote'` instead of `systemctl`, `%LOCALAPPDATA%\hermes-remote\state\bridge.log`
+instead of `journalctl`, and `hermes-remote-bridge firewall` opens Windows Defender Firewall
+(one UAC prompt). There is no "trust this network?" popup: run `hermes-remote-bridge trust`.
+WSL2 cannot work; see [PLATFORMS.md](PLATFORMS.md).
+
+**Windows: "running scripts is disabled on this system".** Run `install.cmd` instead of
+`install.ps1`. It relaxes the policy for that one run only; do not change the policy yourself.
+
+**Windows: a window flashed "the following arguments are required: command".** That is the bridge
+`.exe` double-clicked with nothing after its name. Use `pair.cmd` to pair, or open a prompt and run
+`hermes-remote-bridge doctor`. Current versions show a help screen instead of that error.
+
+**Windows: "uv is required".** Older copies of the installer stopped here. Pull the latest, or run
+`winget install --id=astral-sh.uv`, open a *new* PowerShell window (the old one does not see the
+new PATH), and run the installer again.
+
 **`forbidden_network` / "The PC doesn't serve this network."**
 
 The bridge only serves loopback, Tailscale, and a Wi-Fi network you marked trusted. On the PC:

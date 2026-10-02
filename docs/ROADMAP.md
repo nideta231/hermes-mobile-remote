@@ -19,10 +19,19 @@ Roughly, in the order the pieces landed:
 - In-app updates from tagged GitHub Releases.
 - Notifications for app-started runs.
 - Remote desktop hand-off to aFreeRDP (KRdp).
+- Windows support (experimental): a host layer, `install.ps1`, a Scheduled Task and a Windows CI
+  job. See [PLATFORMS.md](PLATFORMS.md).
 - A demo stack with a synthetic backend, so the app can be tried and recorded without a real
   Hermes.
 
 ## Next
+
+**Windows from experimental to supported.** Needs someone to run it on real Wi-Fi and with
+Tailscale and report back, because CI has neither. The checklist of what is unproven is in
+[PLATFORMS.md](PLATFORMS.md#what-is-verified-on-windows).
+
+**macOS.** The seam exists (`host/macos.py`); the local-network path, a launchd agent and an
+installer are missing. Loopback and Tailscale would already work. Needs a Mac to develop on.
 
 **A real end-to-end test in CI.** The live test exists
 (`android/.../LiveBridgeTest.kt`, `bridge/tests/e2e_live.py`) but needs a real Hermes, so it only

@@ -110,6 +110,7 @@ app is in the background.
 
 - Live streaming only for runs started in the app.
 - Notifications only for runs started in the app.
-- The bridge is Linux-only (systemd user service, NetworkManager, KRdp).
+- The bridge runs on Linux (supported) and Windows (experimental). macOS is not implemented. See
+  [PLATFORMS.md](PLATFORMS.md).
 - Slash commands that need a live agent on the PC are not offered.
 - One active run per session, by design: the bridge refuses a second.
