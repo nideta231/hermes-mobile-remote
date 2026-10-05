@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -44,8 +45,56 @@ def _network_profile(interface: str) -> tuple[str, str] | None:
     return host().network_profile(interface)
 
 
-def current_network() -> Network | None:
-    """The private network the default route goes through, or None (offline / not private)."""
+# Caching the computed network identity. Each answer costs three PowerShell round trips on
+# Windows - Get-NetRoute (~0.8 s), Get-NetNeighbor (~1.1 s), Get-NetConnectionProfile (~0.8 s) -
+# because each cmdlet needs its own powershell.exe. /v1/me asks for the current network twice per
+# request (once for `network`, once through serving_lan_ips()), and the app polls that endpoint
+# every few seconds, so it was queueing behind multi-second answers and the phone read that as
+# "connecting". Measured: /v1/me took 4.5-4.9 s per call.
+#
+# Two rules make the cache safe rather than merely fast:
+#
+#  1. Time alone is not an acceptable key. Identity is (connection profile, router MAC) and the
+#     whole point of the MAC is that a hotspot copying an SSID does not inherit trust, so a
+#     swapped router must not keep the old identity. `fresh=True` exists for exactly that, and
+#     test_host.py / test_app.py pin the behaviour.
+#  2. The key must be cheap. An earlier version keyed on the default route, which is itself a
+#     PowerShell call - the cache then cost as much as the value it avoided. interface_ips() is
+#     psutil and takes ~12 ms, so it is the only input used to invalidate.
+#
+# The TTL is short because the bridge's own listen-set watcher re-evaluates every 5 s anyway, and
+# a phone is what notices a network change first.
+_CACHE_TTL = 1.0
+_cached: tuple[str, float, Network | None] = ("", -1e9, None)
+_cache_lock = threading.Lock()
+
+
+def _fingerprint() -> str:
+    """Cheap identity of the inputs: psutil only, no subprocess, safe on every call."""
+    return repr(sorted((name, tuple(sorted(ips)))
+                       for name, ips in host().interface_ips().items()))
+
+
+def current_network(*, fresh: bool = False) -> Network | None:
+    """The private network the default route goes through, or None (offline / not private).
+
+    `fresh=True` bypasses the cache entirely, for callers that must not act on a reused answer.
+    """
+    global _cached
+    if fresh:
+        return _compute_network()
+    key = _fingerprint()
+    with _cache_lock:
+        stamp_key, stamp, value = _cached
+        if stamp_key == key and time.monotonic() - stamp < _CACHE_TTL:
+            return value
+    value = _compute_network()
+    with _cache_lock:
+        _cached = (key, time.monotonic(), value)
+    return value
+
+
+def _compute_network() -> Network | None:
     route = _default_route()
     if route is None:
         return None
@@ -115,10 +164,13 @@ def serving_lan_ips(enabled: bool, trust: TrustStore) -> list[str]:
     if not enabled:
         return []
     net = current_network()
-    if not trust.is_trusted(net):
+    if net is None or not trust.is_trusted(net):
         return []
-    routable = _default_route_ips()
-    return [ip for ip in net.lan_ips if not routable or ip in routable]
+    # net.lan_ips is already filtered to the default-route interface by _compute_network, and to
+    # private addresses, so it is exactly the set to serve. The previous version asked the OS for
+    # the default-route addresses again (_default_route_ips -> Get-NetRoute, ~0.8 s on Windows)
+    # and filtered by it, which was redundant work on every /v1/me and every watcher tick.
+    return list(net.lan_ips)
 
 
 def network_info(trust: TrustStore) -> dict | None:

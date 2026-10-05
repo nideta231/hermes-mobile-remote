@@ -99,14 +99,18 @@ def test_service_state_maps_task_states(monkeypatch):
 
 
 def test_same_ssid_different_router_is_a_different_network_on_windows(monkeypatch):
-    """The trust model is OS independent: identity = profile + router MAC."""
+    """The trust model is OS independent: identity = profile + router MAC.
+
+    fresh=True throughout: current_network() caches for a moment, and this test is about the one
+    case where a stale answer would be a security problem - a router swap behind the same SSID.
+    """
     monkeypatch.setattr(network, "_default_route", lambda: ("Wi-Fi", "192.168.1.1"))
     monkeypatch.setattr(network, "_interface_ips", lambda: {"Wi-Fi": ["192.168.1.10"]})
     monkeypatch.setattr(network, "_network_profile", lambda i: ("{GUID}", "HomeWiFi"))
     monkeypatch.setattr(network, "_gateway_mac", lambda g: "aa:aa:aa:aa:aa:aa")
-    home = network.current_network()
+    home = network.current_network(fresh=True)
     monkeypatch.setattr(network, "_gateway_mac", lambda g: "bb:bb:bb:bb:bb:bb")
-    assert network.current_network().id != home.id
+    assert network.current_network(fresh=True).id != home.id
 
 
 # ------------------------------------------------------------------ firewall

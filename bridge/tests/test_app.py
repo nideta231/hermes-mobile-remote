@@ -412,12 +412,13 @@ def test_same_ssid_behind_a_different_router_is_a_different_network(monkeypatch)
     monkeypatch.setattr(network, "_interface_ips", lambda: {"wlan0": ["192.168.1.10"]})
     monkeypatch.setattr(network, "_network_profile", lambda iface: ("uuid-home", "HomeWiFi"))
     monkeypatch.setattr(network, "_gateway_mac", lambda gw: "aa:aa:aa:aa:aa:aa")
-    home = network.current_network()
+    # fresh=True: this is the router-swap case, where a cached identity would be a security bug.
+    home = network.current_network(fresh=True)
     monkeypatch.setattr(network, "_gateway_mac", lambda gw: "bb:bb:bb:bb:bb:bb")
-    impostor = network.current_network()
+    impostor = network.current_network(fresh=True)
     assert home.name == impostor.name == "HomeWiFi" and home.id != impostor.id
     monkeypatch.setattr(network, "_gateway_mac", lambda gw: None)
-    assert network.current_network() is None  # unknown router -> never trusted
+    assert network.current_network(fresh=True) is None  # unknown router -> never trusted
 
 
 def test_tls_identity_is_created_once_with_private_key(tmp_path):
