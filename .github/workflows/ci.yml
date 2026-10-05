@@ -35,16 +35,119 @@ jobs:
         working-directory: .
         run: |
           $PSVersionTable.PSVersion
-          foreach ($f in 'install.ps1', 'bridge/windows/run-bridge.ps1') {
+          foreach ($f in 'install.ps1', 'bridge/windows/run-bridge.ps1', 'bridge/windows/tray.ps1', 'bridge/windows/supervise.ps1') {
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errors)
             if ($errors) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
           }
           # 5.1 reads a script with no BOM as the ANSI code page; any non-ASCII byte can corrupt it.
-          foreach ($f in 'install.ps1', 'install.cmd', 'bridge/windows/run-bridge.ps1') {
+          foreach ($f in 'install.ps1', 'install.cmd', 'pair.cmd', 'bridge/windows/run-bridge.ps1',
+                            'bridge/windows/tray.ps1', 'bridge/windows/supervise.ps1') {
             $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $f))
             if ($bytes | Where-Object { $_ -gt 127 }) { Write-Error "$f contains non-ASCII bytes"; exit 1 }
           }
+      - name: The bridge has a machine-readable interface for the tray
+        shell: pwsh
+        run: |
+          uv run hermes-remote-bridge doctor --json | ConvertFrom-Json | ForEach-Object {
+            if (-not $_.checks) { throw 'doctor --json has no checks' }
+            "doctor --json: $($_.checks.Count) checks, ids: $(($_.checks.id) -join ',')"
+          }
+          $d = uv run hermes-remote-bridge devices --json | ConvertFrom-Json
+          if ($null -eq $d.devices) { throw 'devices --json has no devices key' }
+          $t = uv run hermes-remote-bridge trust --list --json | ConvertFrom-Json
+          if ($null -eq $t.trusted) { throw 'trust --list --json has no trusted key' }
+          'devices/trust JSON keys present'
+      - name: The tray starts the bridge and stops it again
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $tray = (Resolve-Path 'bridge/windows/tray.ps1').Path
+          $bin  = (Resolve-Path 'bridge/.venv/Scripts/hermes-remote-bridge.exe').Path
+          $log  = Join-Path $env:RUNNER_TEMP 'tray-bridge.log'
+          $stdout = Join-Path $env:RUNNER_TEMP 'tray-stdout.log'
+          # A healthy tray prints nothing and then blocks in Application.Run(), so it cannot be
+          # run in the foreground here: start it, prove it came up, and stop it again.
+          $p = Start-Process powershell.exe -PassThru -WindowStyle Hidden `
+            -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden',
+                          '-File', $tray, '-Bin', $bin, '-LogFile', $log `
+            -RedirectStandardOutput $stdout -RedirectStandardError "$stdout.err"
+          $up = $false
+          for ($i = 0; $i -lt 30 -and -not $up; $i++) {
+            Start-Sleep -Seconds 1
+            try { $null = Invoke-WebRequest 'http://127.0.0.1:8650/v1/me' -UseBasicParsing -TimeoutSec 2 }
+            catch { if ($_.Exception.Response) { $up = $true } }
+          }
+          if (-not $up) {
+            Get-Content "$stdout.err" -ErrorAction SilentlyContinue | Select-Object -First 20
+            Get-Content $log -ErrorAction SilentlyContinue | Select-Object -First 20
+            throw 'the tray did not bring the bridge up'
+          }
+          "tray pid $($p.Id); bridge answered on 8650 after ${i}s"
+          # It must also still be alive a minute later. A tray that dies on its first health poll
+          # leaves the bridge orphaned and the port held, which reads as "installed and working"
+          # right up until the next logon. The crash was a PowerShell script block on a
+          # thread-pool thread (ScriptBlock.GetContextFromTLS), so check for those events too.
+          Start-Sleep -Seconds 45
+          if ($p.HasExited) { throw "the tray exited on its own (exit code $($p.ExitCode))" }
+          $crashes = @(Get-EventLog -LogName Application -Newest 25 -ErrorAction SilentlyContinue |
+              Where-Object { $_.TimeGenerated -gt (Get-Date).AddMinutes(-2) -and $_.Message -like '*GetContextFromTLS*' })
+          if ($crashes) { throw "the tray crashed its PowerShell host $($crashes.Count) time(s)" }
+          # Quit the tray: the bridge must go with it, and the port must be released.
+          & taskkill.exe /PID $p.Id /T /F 2>&1 | Out-Null
+          Start-Sleep -Seconds 3
+          if (Get-Process -Name hermes-remote-bridge -ErrorAction SilentlyContinue) { throw 'bridge outlived the tray' }
+          $err = Get-Content "$stdout.err" -ErrorAction SilentlyContinue | Out-String
+          $out = Get-Content $stdout -ErrorAction SilentlyContinue | Out-String
+          if ($out.Trim()) { Write-Host "tray stdout: $out"; throw 'a healthy tray prints nothing' }
+          if ($err -match 'Exception|Traceback') { Write-Host $err; throw 'the tray logged an exception' }
+          'tray started the bridge, and stopped it on exit'
+      - name: The supervisor is shared, not duplicated
+        shell: powershell
+        run: |
+          # The policy lives once, in supervise.ps1, and both entry points reach it through
+          # run-bridge.ps1. A copy pasted into the tray is the drift we are avoiding.
+          $supervise = Get-Content 'bridge/windows/supervise.ps1' -Raw
+          if ($supervise -notmatch 'function Invoke-BridgeSupervisor') { throw 'supervise.ps1 defines no entry point' }
+          $runner = Get-Content 'bridge/windows/run-bridge.ps1' -Raw
+          if ($runner -notmatch 'Invoke-BridgeSupervisor') { throw 'run-bridge.ps1 does not call the shared supervisor' }
+          if ($runner -match 'quickFailures') { throw 'run-bridge.ps1 reimplements the backoff' }
+          $tray = Get-Content 'bridge/windows/tray.ps1' -Raw
+          if ($tray -match 'quickFailures') { throw 'tray.ps1 reimplements the backoff; keep it in supervise.ps1' }
+          # The tray supervises through run-bridge.ps1, not its own copy of the loop.
+          if ($tray -notmatch 'run-bridge\.ps1') { throw 'tray.ps1 does not start run-bridge.ps1' }
+          'supervisor policy lives in exactly one file'
+      - name: Menu handlers capture their own loop variable
+        shell: powershell
+        run: |
+          # A bare { $name } inside a foreach shares one variable across every closure, so all
+          # the "revoke" and "remove" items acted on the LAST entry in the list: clicking
+          # "phone - revoke" revoked whichever device happened to be last, and the user's phone
+          # stayed paired. Every closure built in a loop must end in .GetNewClosure().
+          $seen = @()
+          foreach ($device in @('alpha', 'beta', 'gamma')) {
+            $name = $device
+            $seen += { $name }
+          }
+          $bare = @(($seen | ForEach-Object { & $_ }))
+          Write-Output "bare closures capture: $($bare -join ', ')"
+          if ($bare[0] -ne 'gamma') { throw 'expected bare closures to share the last value; this check needs rethinking' }
+
+          $fixed = @()
+          foreach ($device in @('alpha', 'beta', 'gamma')) {
+            $name = $device
+            $fixed += { $name }.GetNewClosure()
+          }
+          $values = @(($fixed | ForEach-Object { & $_ }))
+          Write-Output "GetNewClosure captures: $($values -join ', ')"
+          if (($values -join ',') -ne 'alpha,beta,gamma') { throw 'GetNewClosure did not capture per iteration' }
+
+          # And the tray must actually use it: one per list that builds per-item handlers.
+          $tray = Get-Content 'bridge/windows/tray.ps1' -Raw
+          $closures = ([regex]::Matches($tray, 'GetNewClosure')).Count
+          Write-Output "tray.ps1 uses GetNewClosure in $closures place(s)"
+          if ($closures -lt 2) { throw 'tray.ps1 builds loop handlers without GetNewClosure' }
+          'loop handlers capture per item'
       - name: Host probes answer on real Windows
         shell: pwsh
         run: |
@@ -108,7 +211,7 @@ jobs:
           if ($out -match 'did not start|Error:') { throw 'installer reported a failure' }
           if ($out -match 'Apply now') { throw '-Unattended must not touch the firewall' }
           if (Get-NetFirewallRule -DisplayName 'Hermes Mobile Remote' -ErrorAction SilentlyContinue) { throw 'a firewall rule was created unattended' }
-          if ($out -notmatch 'running; starts at every logon') { throw 'installer did not confirm a running bridge' }
+          if ($out -notmatch 'the tray is in the notification area') { throw 'installer did not confirm a running bridge' }
 
           $task = Get-ScheduledTask -TaskName 'Hermes Mobile Remote'
           "task state: $($task.State)"
@@ -130,6 +233,9 @@ jobs:
 
           # 3c. Pairing through the launcher. A runner has no phone, so trust its network to give
           #     the code an address, then check a real QR picture and manual-entry details come out.
+          #     pair.cmd is the console path and is still supported; the installer no longer offers
+          #     it (it would hand the PNG to the Photos app and leave the token in a file), and
+          #     that is asserted in step 3d.
           & $exe trust | Out-Host
           $out = (cmd /c "echo.| `"$root\pair.cmd`"" 2>&1 | Out-String)
           Write-Host ($out -replace 'Token: \S+', 'Token: <hidden>')
@@ -140,11 +246,18 @@ jobs:
           if ([System.IO.File]::ReadAllBytes($png)[1..3] -join ',' -ne '80,78,71') { throw 'the QR file is not a PNG' }
           Remove-Item $png -Force
 
+          # 3d. The installer must point at the tray instead of pairing. `pair` from the console
+          #     writes the QR to disk and opens it with the default image handler (the Photos app),
+          #     leaving a live token in a file; the tray pairs in its own window and deletes it.
+          $install = (cmd /c "echo.| `"$root\install.cmd`" -Unattended" 2>&1 | Out-String)
+          if ($install -match 'hrb_') { throw 'the installer paired a device; pairing belongs in the tray' }
+          if ($install -notmatch 'Pair a new device') { throw 'the installer does not point at the tray for pairing' }
+
           # 4. Re-running over a running install is safe (an update).
           $out = (cmd /c "echo.| `"$root\install.cmd`" -Unattended" 2>&1 | Out-String)
-          if ($out -notmatch 'running; starts at every logon') { throw 'second run did not leave a running bridge' }
+          if ($out -notmatch 'the tray is in the notification area') { throw 'second run did not leave a running bridge' }
 
-          # 5. The bridge must also come back by itself: kill it and the task has to restart it.
+          # 5. The bridge must also come back by itself: kill it and the tray has to restart it.
           Get-Process -Name hermes-remote-bridge -ErrorAction SilentlyContinue | Stop-Process -Force
           $back = $false
           for ($i = 0; $i -lt 40 -and -not $back; $i++) {
@@ -154,11 +267,16 @@ jobs:
           }
           if (-not $back) { throw 'bridge did not come back after being killed' }
 
-          # 6. Uninstall removes the task and leaves no bridge process.
+          # 6. Uninstall stops the tray first, then the task, and leaves no bridge process. The
+          #    tray can be running detached, so this is the step that would otherwise orphan one.
           $out = (cmd /c "echo.| `"$root\install.cmd`" -Uninstall" 2>&1 | Out-String)
           Write-Host $out
+          if ($out -notmatch 'API_SERVER_KEY') { throw 'uninstall did not say where the API key is' }
           if (Get-ScheduledTask -TaskName 'Hermes Mobile Remote' -ErrorAction SilentlyContinue) { throw 'task still registered' }
           if (Get-Process -Name hermes-remote-bridge -ErrorAction SilentlyContinue) { throw 'bridge still running' }
+          $trayLeft = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+              Where-Object { $_.CommandLine -and $_.CommandLine -like '*tray.ps1*' })
+          if ($trayLeft) { throw "tray still running: $($trayLeft.ProcessId -join ',')" }
 
   android:
     runs-on: ubuntu-latest
