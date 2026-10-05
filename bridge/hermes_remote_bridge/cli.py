@@ -48,7 +48,40 @@ def _plain_hosts(cfg: Config, retries: int) -> tuple[list[str], str | None]:
     return hosts, owner
 
 
+def _port_in_use(host: str, port: int) -> bool:
+    """True when something already accepts connections on ``host:port``.
+
+    ``bind()`` cannot be relied on to notice: ``_bind`` sets SO_REUSEADDR, and on Windows that
+    flag lets a *second* bind of the same address/port succeed (on Linux it only covers
+    TIME_WAIT, so this matters most there). Two bridges would then silently share the port
+    and connections would land on whichever socket the stack picked. A TCP connect is the
+    check that behaves the same on every platform.
+    """
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    probe = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        probe.settimeout(2)
+        probe.connect((host, port))
+    except OSError:
+        return False
+    finally:
+        probe.close()
+    return True
+
+
 def _bind(host: str, port: int) -> socket.socket:
+    """Bind one listening socket, refusing if the port is already served.
+
+    SO_REUSEADDR is set for TIME_WAIT (Linux) and is harmless there, but on Windows it also lets a
+    *second* bind of the same address/port succeed, so bind() alone is not a guard. The check
+    below is deliberately not atomic with the bind: between the connect and the bind another
+    process can win the port, and then bind() raises and we surface that. What the check buys is
+    a clear message for the common case (a bridge is already running) instead of a traceback.
+    """
+    if _port_in_use(host, port):
+        raise SystemExit(
+            f"Port {port} is already in use on {host}; another bridge is probably running. "
+            f"Stop it first (the tray: Quit Hermes Remote), or set a different port in config.toml.")
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     sock = socket.socket(family, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -95,6 +128,8 @@ def cmd_serve(cfg: Config, _: argparse.Namespace) -> None:
     app = create_app(cfg, owner_login=owner, trust=trust)
     servers = [uvicorn.Server(uvicorn.Config(app, access_log=False, log_level="info",
                                              timeout_graceful_shutdown=5, proxy_headers=False))]
+    # _bind checks each address for itself and reports the conflict by name, so there is no
+    # separate sweep here to keep in sync with it.
     sockets = [[_bind(h, cfg.port) for h in plain]]
     pin = None
     if lan:
@@ -189,11 +224,17 @@ def _ask_to_trust(trust: TrustStore, net) -> None:
         return
 
     def ask():
-        answer = host().prompt_trust(net.name)
+        # Re-read the network rather than trusting the value captured at startup: the tray is
+        # long-lived, and by the time this runs the PC may be somewhere else. current_network is
+        # cached for a second, which is fresh enough for a prompt.
+        current = current_network()
+        if current is None or current.id != net.id:
+            return  # the network changed again; the next watcher pass will ask about the new one
+        answer = host().prompt_trust(current.name)
         if answer == "trust":
-            trust.trust(net)  # the watcher sees it and restarts with the LAN listener
+            trust.trust(current)  # the watcher sees it and restarts with the LAN listener
         elif answer == "no":
-            trust.decline(net)
+            trust.decline(current)
 
     threading.Thread(target=ask, daemon=True).start()
 
@@ -356,6 +397,14 @@ def cmd_trust(cfg: Config, args: argparse.Namespace) -> None:
     if args.list:
         current = current_network()
         rows = trust.list()
+        if getattr(args, "json", False):
+            print(json.dumps({
+                "current": ({"id": current.id, "name": current.name, "trusted": current.id in rows,
+                             "interface": current.interface} if current else None),
+                "trusted": [{"id": net_id, "name": info.get("name", "?"), "since": info.get("since")}
+                            for net_id, info in rows.items()],
+            }, indent=2))
+            return
         if not rows:
             print("No trusted networks.")
         for net_id, info in rows.items():
@@ -374,9 +423,14 @@ def cmd_trust(cfg: Config, args: argparse.Namespace) -> None:
     print(f"Trusted {net.name!r} ({net.id}). The bridge picks it up within a few seconds.")
 
 
-def cmd_devices(cfg: Config, _: argparse.Namespace) -> None:
+def cmd_devices(cfg: Config, args: argparse.Namespace) -> None:
     fmt = lambda ts: datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "-"
     rows = DeviceStore(cfg.devices_file).list()
+    if getattr(args, "json", False):
+        print(json.dumps({"devices": [
+            {"id": d.id, "name": d.name, "active": d.active, "created_at": d.created_at,
+             "last_seen_at": d.last_seen_at, "revoked_at": d.revoked_at} for d in rows]}, indent=2))
+        return
     if not rows:
         print("No paired devices.")
     for d in rows:
@@ -384,8 +438,11 @@ def cmd_devices(cfg: Config, _: argparse.Namespace) -> None:
         print(f"{d.id}  {d.name:<24} paired {fmt(d.created_at)}  last seen {fmt(d.last_seen_at)}  {state}")
 
 
-def cmd_doctor(cfg: Config, _: argparse.Namespace) -> None:
+def cmd_doctor(cfg: Config, args: argparse.Namespace) -> None:
     from . import doctor
+    if getattr(args, "json", False):
+        print(json.dumps({"checks": doctor.collect(cfg)}, indent=2))
+        return  # the JSON document is the whole answer; a summary line would corrupt it
     sys.exit(doctor.run(cfg))
 
 
@@ -448,11 +505,14 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--qr-png", type=Path, help="Write the pairing QR to a PNG (mode 600) instead of the terminal")
     r = sub.add_parser("revoke", help="Revoke a paired device")
     r.add_argument("device", help="Device name or id")
-    sub.add_parser("devices", help="List paired devices")
+    d = sub.add_parser("devices", help="List paired devices")
+    d.add_argument("--json", action="store_true", help="Machine-readable output (for the tray app)")
     t = sub.add_parser("trust", help="Trust the network this PC is on (serve the LAN there)")
     t.add_argument("--list", action="store_true", help="List trusted networks")
     t.add_argument("--remove", metavar="ID", help="Stop trusting a network")
-    sub.add_parser("doctor", help="Check why the phone can't connect")
+    t.add_argument("--json", action="store_true", help="Machine-readable output, with --list")
+    doc = sub.add_parser("doctor", help="Check why the phone can't connect")
+    doc.add_argument("--json", action="store_true", help="Machine-readable checks (for the tray app)")
     f = sub.add_parser("firewall", help="Allow the bridge port from the local network (asks first)")
     f.add_argument("--yes", action="store_true", help="Don't ask for confirmation")
     f.add_argument("--if-needed", action="store_true", help=argparse.SUPPRESS)

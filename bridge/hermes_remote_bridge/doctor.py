@@ -47,11 +47,35 @@ def _check_service() -> tuple[str, str]:
         return WARN, "No service manager found; run `hermes-remote-bridge serve` yourself"
     if state == "active":
         return OK, "Bridge service is running"
+    # On Windows the Scheduled Task is only the logon trigger: it starts the tray, and the tray
+    # supervises the bridge. A task sitting in Ready therefore says nothing about whether the
+    # bridge is up, so ask the thing that actually answers.
     if host().name == "windows":
-        return FAIL, (f"Bridge task is {state}. Start it: Start-ScheduledTask -TaskName 'Hermes Mobile Remote' "
+        if _bridge_answers():
+            return OK, "Bridge is running (the tray app supervises it; the task is the logon trigger)"
+        return FAIL, ("Bridge is not answering on port 8650. Start the tray, or: "
+                      "Start-ScheduledTask -TaskName 'Hermes Mobile Remote' "
                       "(logs: %LOCALAPPDATA%\\hermes-remote\\state\\bridge.log)")
     return FAIL, (f"Bridge service is {state}. Start it: systemctl --user enable --now hermes-remote-bridge "
-                  "(logs: journalctl --user -u hermes-remote-bridge)")
+                  f"(logs: journalctl --user -u hermes-remote-bridge)")
+
+
+def _bridge_answers() -> bool:
+    """Is something serving the bridge port right now? An unauthenticated 401 counts: it means
+    the bridge is up and refusing this request, which is exactly what it should do."""
+    import socket
+
+    from .config import Config
+
+    try:
+        port = Config().port
+    except Exception:  # noqa: BLE001 - a broken config must not crash the check
+        return False
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=2):
+            return True
+    except OSError:
+        return False
 
 
 def _check_network(cfg: Config) -> tuple[str, str]:
@@ -95,12 +119,26 @@ def _check_devices(cfg: Config) -> tuple[str, str]:
     return OK, f"{len(active)} paired device(s): {', '.join(d.name for d in active)}"
 
 
+CHECK_ORDER = ("hermes", "service", "network", "firewall", "tailscale", "devices")
+
+
+def collect(cfg: Config) -> list[dict]:
+    """Every check as structured data, in display order.
+
+    The tray renders this instead of scraping the human output, so `id` is a stable handle and
+    `level` is the severity; `message` is the same sentence `run` prints, kept in one place so
+    the two can never disagree.
+    """
+    found = {"hermes": _check_hermes(cfg), "service": _check_service(), "network": _check_network(cfg),
+             "firewall": _check_firewall(cfg), "tailscale": _check_tailscale(), "devices": _check_devices(cfg)}
+    return [{"id": name, "level": found[name][0], "message": found[name][1]} for name in CHECK_ORDER]
+
+
 def run(cfg: Config) -> int:
-    checks = [_check_hermes(cfg), _check_service(), _check_network(cfg), _check_firewall(cfg),
-              _check_tailscale(), _check_devices(cfg)]
+    checks = collect(cfg)
     marks = _marks()
-    for level, msg in checks:
-        print(f" {marks[level]} {msg}")
-    failed = sum(level == FAIL for level, _ in checks)
+    for check in checks:
+        print(f" {marks[check['level']]} {check['message']}")
+    failed = sum(c["level"] == FAIL for c in checks)
     print("\nAll good." if not failed else f"\n{failed} problem(s) found.")
     return 1 if failed else 0
