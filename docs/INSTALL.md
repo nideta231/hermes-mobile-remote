@@ -170,16 +170,22 @@ The installer does the same five things as the Linux one:
 1. Checks `uv` and Hermes (`%LOCALAPPDATA%\hermes`, or `$env:HERMES_HOME`).
 2. Turns on Hermes' API server with a fresh random key in Hermes' `.env`.
 3. Installs the bridge into `bridge\.venv`.
-4. Registers a Scheduled Task called **Hermes Mobile Remote** that starts at logon and restarts the
-   bridge when the network changes.
+4. Registers a Scheduled Task called **Hermes Mobile Remote** that starts at logon. It starts the
+   tray app, which runs the bridge, restarts it when the network changes, and puts an icon in the
+   notification area.
 5. Asks whether this is a network you trust, then offers the firewall rule (one UAC prompt, private
    ranges and the Private profile only).
 
-Then pair the phone: double-click **`pair.cmd`** in the folder (the installer also offers to do it at
-the end). It opens the QR code as a picture, which scans reliably; the Windows console draws block
-characters badly. The `.exe` in `bridge\.venv\Scripts` needs a command after its name, so
-double-clicking *that* only shows a help screen.
+Then pair the phone: the tray is in the notification area, so use **Devices → Pair a new device**
+and scan the code in the app. `pair.cmd` in the folder still works from a console, but the
+installer deliberately does not offer it: `pair` from the console writes the QR to a file and
+opens it with your default image viewer, which leaves a live token sitting on disk. The tray shows
+the QR in a window of its own and deletes the picture when you close it. The `.exe` in
+`bridge\.venv\Scripts` needs a command after its name, so double-clicking *that* only shows a help
+screen.
 
-Check on it any time with `.\bridge\.venv\Scripts\hermes-remote-bridge.exe doctor`. To remove
-it: `install.cmd -Uninstall` (keeps your paired devices and settings in
-`%LOCALAPPDATA%\hermes-remote`).
+Check on it any time from the tray menu, or with
+`.\bridge\.venv\Scripts\hermes-remote-bridge.exe doctor`. The tray also offers the firewall rule,
+which is the usual reason a phone cannot connect on a fresh Windows install. To remove it:
+`install.cmd -Uninstall` stops the tray, the task and the firewall rule, and keeps your paired
+devices and settings in `%LOCALAPPDATA%\hermes-remote`; add `-Purge` to delete those too.

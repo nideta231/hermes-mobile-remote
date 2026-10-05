@@ -1,7 +1,8 @@
 """Windows 10/11: PowerShell NetTCPIP cmdlets, Scheduled Task, Windows Defender Firewall.
 
-Written against Microsoft's documented cmdlets and unit-tested with their output replaced; it has
-not been run on real hardware by the author. See docs/WINDOWS.md for the verification checklist.
+Written against Microsoft's documented cmdlets and unit-tested with their output replaced, and
+exercised for real on a Windows 11 machine (tray start, bridge up, tray quit). See
+docs/PLATFORMS.md#what-is-verified-on-windows for what that does and does not prove.
 """
 from __future__ import annotations
 
