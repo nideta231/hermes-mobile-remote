@@ -669,9 +669,18 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     private fun sendMessage(text: String, display: String) {
         val c = client ?: return
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || _chat.value.busy || _chat.value.sending) return
+        if (trimmed.isEmpty()) return
+        if (_chat.value.busy || _chat.value.sending) {
+            // Never drop a send silently: the text stays in the composer and the snackbar says
+            // why, so a tap that lands while the last message is still on its way cannot read as
+            // "it was never sent".
+            _toast.value = if (_chat.value.sending) "Still sending your last message…"
+                           else "A task is still running here — wait for it, or stop it."
+            return
+        }
         val requestId = UUID.randomUUID().toString().replace("-", "")
-        _chat.update { it.copy(sending = true, items = it.items + ChatItem.User("u-$requestId", display, pending = true)) }
+        _chat.update { it.copy(sending = true, draft = if (it.draft.trim() == display.trim()) "" else it.draft,
+            items = it.items + ChatItem.User("u-$requestId", display, pending = true)) }
         viewModelScope.launch {
             try {
                 val sid = _chat.value.sessionId ?: c.createSession(display.lineSequence().first().take(60)).also { s ->
@@ -694,10 +703,18 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                 attach(run, fromSeq = 0)
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
-                // Retryable failures keep pendingSend so the next foreground resends with the same id.
+                // Retryable failures keep pendingSend so the next foreground resends with the same
+                // id and the message reappears from history; anything else is final, so the text
+                // goes back to the composer rather than vanishing with the failed bubble.
                 if (t !is IOException) store.pendingSend = null
-                _chat.update { st -> st.copy(sending = false, items = st.items.filterNot { it.key == "u-$requestId" }) }
+                _chat.update { st ->
+                    st.copy(sending = false, items = st.items.filterNot { it.key == "u-$requestId" },
+                        draft = if (t is IOException || st.draft.isNotEmpty()) st.draft else display)
+                }
                 say(t)
+                // A busy session is not a dead end: show the run that blocks the send, so its
+                // approval or stop button is right there instead of an unexplained refusal.
+                if (t is BridgeException && t.code == "session_busy") showBusyRun()
             }
         }
     }
@@ -728,7 +745,15 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
             if (t !is IOException) store.pendingSend = null
+            if (t is BridgeException && t.code == "session_busy" && _chat.value.sessionId == sid) showBusyRun()
         }
+    }
+
+    /** After a 409 from a busy session, show the run that blocks the send: its approval dock or
+     *  stop button explains the refusal and gives the next step, instead of "it didn't send". */
+    private fun showBusyRun() {
+        val sid = _chat.value.sessionId ?: return
+        viewModelScope.launch { reloadSession(sid, null, fetchActive = true) }
     }
 
     private fun attach(run: RunSnapshot, fromSeq: Long) {
@@ -798,11 +823,18 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     fun steer(text: String) {
         val c = client ?: return
-        val run = _chat.value.run ?: return
+        val run = _chat.value.run
+        if (run == null) {
+            _toast.value = "There's no running task to steer."
+            return
+        }
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
         viewModelScope.launch {
             try {
-                c.steer(run.runId, text.trim())
-                _chat.update { it.copy(items = it.items + ChatItem.Notice("steer-${System.nanoTime()}", "Steer: ${text.trim()}")) }
+                c.steer(run.runId, trimmed)
+                _chat.update { it.copy(draft = if (it.draft.trim() == trimmed) "" else it.draft,
+                    items = it.items + ChatItem.Notice("steer-${System.nanoTime()}", "Steer: $trimmed")) }
             } catch (t: Throwable) { say(t) }
         }
     }
@@ -838,6 +870,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     private fun runSlash(line: String) {
+        _chat.update { it.copy(draft = "") } // the typed command was consumed, as it always was
         val name = line.drop(1).substringBefore(' ').lowercase()
         val arg = line.substringAfter(' ', "").trim()
         when (name) {

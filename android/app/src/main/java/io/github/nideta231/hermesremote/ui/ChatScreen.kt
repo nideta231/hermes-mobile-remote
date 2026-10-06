@@ -608,8 +608,9 @@ private fun Composer(
                         Spacer(Modifier.width(8.dp))
                         SendButton(state, text, onSend = {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            // The view model clears the draft only when the send is accepted, so a
+                            // refused send keeps its text here instead of losing it.
                             if (state.busy) actions.steer(text) else actions.send(text)
-                            actions.draft("")
                         }, onStop = actions.stop)
                     }
                 }
