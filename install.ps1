@@ -77,16 +77,19 @@ if ($Uninstall) {
     # Two traps here, both hit on a real machine:
     #  - Match on a path-shaped -File argument. A looser "*tray.ps1*" also matches this script's
     #    own command line, and the installer kills itself - which is how this went unnoticed for
-    #    several runs. The quote is optional because launchers differ: the Scheduled Task and this
-    #    installer pass an unquoted path, tray.cmd passes a quoted one. \S+ covers both without a
-    #    character class, and a character class is a trap here: [^\"] is an INVALID .NET regex (a
-    #    backslash cannot escape " inside a set) and fails at run time with "Unterminated [] set".
-    #    Verified against all four real command-line shapes: 4/4 match, no self-match.
+    #    several runs. \S* alone missed a QUOTED path with a space in it ("my hermes remote"):
+    #    \S* stops at the space and never reaches the filename, so nothing was killed and trays
+    #    piled up. "[^"]* spans any quoted path, spaces or not; \S* still covers the unquoted
+    #    shape launchers used before. A character class is a trap here: [^\\"] is an INVALID .NET
+    #    regex (a backslash cannot escape " inside a set) and fails at run time with
+    #    "Unterminated [] set". Verified against every real command-line shape (quoted and
+    #    unquoted, with and without spaces) and against this script's own line: full match, no
+    #    self-match.
     #  - Kill tolerantly. A process can exit between being listed and being killed, and taskkill
     #    then writes to stderr, which $ErrorActionPreference='Stop' turns into a fatal error that
     #    aborts the uninstall half-done.
     $trayProcs = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -and $_.CommandLine -match '-File\s+\S*[\\/](tray|run-bridge)\.ps1' })
+        Where-Object { $_.CommandLine -and $_.CommandLine -match '-File\s+(?:"[^"]*|\S*)[\\/](tray|run-bridge)\.ps1' })
     foreach ($proc in $trayProcs) {
         Info "Stopping the Hermes Remote tray (pid $($proc.ProcessId))..."
         $ErrorActionPreference = 'Continue'
@@ -195,10 +198,10 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 # An update may have left the previous tray running; it holds the bridge and the port. Same
 # path-shaped pattern as the uninstaller, and for the same reasons: a loose "*tray.ps1*" matches
-# this script's own command line (so the installer killed itself), while a quoted-only pattern
-# misses the Scheduled Task's unquoted path (so it never cleaned up).
+# this script's own command line (so the installer killed itself), a quoted-only pattern misses
+# the unquoted shape, and \S* alone misses quoted paths that contain a space.
 $stale = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine -match '-File\s+\S*[\\/](tray|run-bridge)\.ps1' })
+    Where-Object { $_.CommandLine -and $_.CommandLine -match '-File\s+(?:"[^"]*|\S*)[\\/](tray|run-bridge)\.ps1' })
 foreach ($proc in $stale) {
     Info "Stopping the previous Hermes Remote (pid $($proc.ProcessId))..."
     $ErrorActionPreference = 'Continue'

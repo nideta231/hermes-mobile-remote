@@ -136,11 +136,13 @@ behaviour would affect Linux too, so it is left as a separate decision.
   **killed itself** on every run, and the uninstaller died half-done because `taskkill` writing to
   stderr met `$ErrorActionPreference = 'Stop'`. Two rounds of "fixes" made it worse before the
   real shape was measured: quoting the path misses the Scheduled Task, which passes it unquoted.
-  The pattern that works, verified against all four real command-line shapes, is
-  `-File\s+\S*[\\/](tray|run-bridge)\.ps1` - `\S+` absorbs the optional quote. A character class is
-  a trap here: `[^\"]` is an **invalid .NET regex** (a backslash cannot escape `"` inside a set) and
-  fails at run time with `Unterminated [] set`. **Print the real command lines and test against
-  them; do not derive the regex by eye.**
+  The pattern that works, verified against every real command-line shape, is
+  `-File\s+(?:"[^"]*|\S*)[\\/](tray|run-bridge)\.ps1` - `\S*` absorbs the optional quote, and
+  `"[^"]*` also spans a **quoted path containing a space** (the "my hermes remote" install),
+  which `\S*` alone cannot reach: it stops at the space, nothing is killed, and stale trays
+  pile up. A character class is a trap here: `[^\\"]` is an **invalid .NET regex** (a backslash
+  cannot escape `"` inside a set) and fails at run time with `Unterminated [] set`. **Print the
+  real command lines and test against them; do not derive the regex by eye.**
 - **Menu handlers built in a loop shared one variable.** A bare `{ $name }` inside a `foreach`
   closes over the *last* value, so every "revoke" item acted on the last device in the list:
   clicking "phone - revoke" revoked something else and the phone stayed paired. Measured on 5.1:
