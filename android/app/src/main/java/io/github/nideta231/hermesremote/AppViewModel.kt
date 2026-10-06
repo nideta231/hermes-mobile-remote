@@ -28,6 +28,8 @@ import android.net.NetworkCapabilities
 import io.github.nideta231.hermesremote.data.Tailnet
 import io.github.nideta231.hermesremote.data.HistoryMapper
 import io.github.nideta231.hermesremote.data.LiveReducer
+import io.github.nideta231.hermesremote.data.coalesceDeltas
+import io.github.nideta231.hermesremote.data.reuseKeys
 import io.github.nideta231.hermesremote.data.ModelCatalog
 import io.github.nideta231.hermesremote.data.ModelOption
 import io.github.nideta231.hermesremote.data.Notifier
@@ -702,12 +704,11 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private suspend fun startWithRetry(c: BridgeClient, sid: String, text: String, requestId: String): RunSnapshot {
         val choice = _modelChoice.value
-        var wait = 1000L
-        repeat(4) {
+        repeat(5) {
             try {
                 return c.startRun(sid, text, requestId, choice?.id, choice?.provider, _reasoning.value)
             } catch (e: IOException) {
-                delay(wait); wait *= 2
+                delay(700)
             }
         }
         return c.startRun(sid, text, requestId, choice?.id, choice?.provider, _reasoning.value)
@@ -743,7 +744,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             while (!finished) {
                 try {
                     _chat.update { it.copy(link = Link.LIVE) }
-                    c.events(run.runId, lastSeq).collect { ev ->
+                    c.events(run.runId, lastSeq).coalesceDeltas().collect { ev ->
                         if (ev.id <= lastSeq) return@collect // never apply an event twice
                         lastSeq = ev.id
                         backoff = 1000L
@@ -778,7 +779,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                     val history = c.messages(sid)
                     _chat.update { st ->
                         val notice = st.items.lastOrNull() as? ChatItem.Notice
-                        val mapped = HistoryMapper.map(history)
+                        val mapped = reuseKeys(st.items, HistoryMapper.map(history))
                         st.copy(items = if (notice != null) mapped + notice else mapped, run = null)
                     }
                 } catch (t: Throwable) { if (t is CancellationException) throw t }

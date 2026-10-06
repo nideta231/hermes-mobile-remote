@@ -3,7 +3,12 @@ package io.github.nideta231.hermesremote.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.runInterruptible
@@ -84,6 +89,8 @@ class BridgeClient(
 
     // Bridge sends keepalives every 15s; 45s without bytes means the link is dead.
     private val sse: OkHttpClient = http.newBuilder().readTimeout(45, TimeUnit.SECONDS).build()
+
+    private val fast: OkHttpClient = http.newBuilder().callTimeout(10, TimeUnit.SECONDS).build()
 
     private fun url(path: String, query: Map<String, Any?> = emptyMap()): String {
         val b = (base + path).toHttpUrl().newBuilder()
@@ -176,15 +183,30 @@ class BridgeClient(
     suspend fun setApprovalMode(mode: String): String =
         call("PUT", "/v1/settings/approvals", body = JSONObject().put("mode", mode)).getString("mode")
 
+    /**
+     * Starting a run is idempotent (client_request_id), so it can fail fast and retry: a fresh
+     * connection (a pooled one that died with the Wi-Fi hangs until the 30s read timeout) and a
+     * short deadline. Without this a send after idle could sit for half a minute.
+     */
     suspend fun startRun(sessionId: String, input: String, clientRequestId: String,
-                         model: String? = null, provider: String? = null, reasoningEffort: String? = null): RunSnapshot =
-        parseRun(call("POST", "/v1/runs", body = JSONObject()
+                         model: String? = null, provider: String? = null, reasoningEffort: String? = null): RunSnapshot {
+        val body = JSONObject()
             .put("session_id", sessionId).put("input", input).put("client_request_id", clientRequestId)
             .apply {
                 model?.let { put("model", it) }
                 provider?.let { put("provider", it) }
                 reasoningEffort?.let { put("reasoning_effort", it) }
-            }))
+            }
+        return parseRun(runInterruptible(Dispatchers.IO) {
+            val req = Request.Builder().url(url("/v1/runs")).header("Connection", "close")
+                .post(body.toString().toRequestBody(jsonType)).build()
+            fast.newCall(req).execute().use { resp ->
+                val text = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) throw parseError(resp, text)
+                JSONObject(text)
+            }
+        })
+    }
 
     suspend fun commands(): List<SlashCommand> = parseCommands(call("GET", "/v1/commands"))
 
@@ -255,4 +277,29 @@ object StatusMapper {
         }
         return out
     }
+}
+
+/**
+ * Merges bursts of `message.delta` events into one per [windowMs]. Applying every token to the chat
+ * re-parses the markdown and re-pins the scroll per token, which flickers and starves the main
+ * thread (taps, including Send, queue behind it). Other events flush the pending text first, so
+ * order is preserved; the merged event carries the newest id so replay cursors stay exact.
+ */
+fun Flow<SseEvent>.coalesceDeltas(windowMs: Long = 60): Flow<SseEvent> = channelFlow {
+    val lock = Mutex()
+    var pending: SseEvent? = null
+    suspend fun flush() { pending?.let { send(it); pending = null } }
+    val ticker = launch { while (true) { delay(windowMs); lock.withLock { flush() } } }
+    try {
+        collect { ev ->
+            lock.withLock {
+                if (ev.name == "message.delta") {
+                    val prev = pending
+                    pending = if (prev == null) ev
+                    else SseEvent(ev.id, ev.name, JSONObject().put("delta", prev.data.optString("delta") + ev.data.optString("delta")))
+                } else { flush(); send(ev) }
+            }
+        }
+        lock.withLock { flush() }
+    } finally { ticker.cancel() }
 }

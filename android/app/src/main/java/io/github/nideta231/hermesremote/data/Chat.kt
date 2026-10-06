@@ -185,3 +185,25 @@ object LiveReducer {
         return out
     }
 }
+
+/**
+ * Persisted history replaces the live items when a run settles. Keep each message's key from the
+ * live item it replaces, otherwise the list sees every reply as removed + new and re-animates it
+ * (the visible flash at the end of a response).
+ */
+fun reuseKeys(old: List<ChatItem>, fresh: List<ChatItem>): List<ChatItem> {
+    val used = BooleanArray(old.size)
+    fun take(match: (ChatItem) -> Boolean): ChatItem? {
+        val i = old.indices.firstOrNull { !used[it] && match(old[it]) } ?: return null
+        used[i] = true
+        return old[i]
+    }
+    return fresh.map { n ->
+        when (n) {
+            is ChatItem.Assistant -> take { it is ChatItem.Assistant && it.text.trim() == n.text.trim() }?.let { n.copy(key = it.key) } ?: n
+            is ChatItem.User -> take { it is ChatItem.User && it.text == n.text }?.let { n.copy(key = it.key) } ?: n
+            is ChatItem.Tool -> take { it is ChatItem.Tool && it.name == n.name }?.let { n.copy(key = it.key) } ?: n
+            else -> n
+        }
+    }.distinctBy { it.key }
+}
