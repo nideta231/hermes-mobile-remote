@@ -113,6 +113,11 @@ jobs:
           if ($out.Trim()) { Write-Host "tray stdout: $out"; throw 'a healthy tray prints nothing' }
           if ($err -match 'Exception|Traceback') { Write-Host $err; throw 'the tray logged an exception' }
           'tray started the bridge, and stopped it on exit'
+          # Every check above passed, so say so explicitly. taskkill returns 128 when a descendant
+          # exits while the tree is being walked (a health poll's doctor.exe finishing at the wrong
+          # moment), and PowerShell 5.1 lets that stray code become the step's exit code, failing a
+          # step where nothing is wrong.
+          exit 0
       - name: The supervisor is shared, not duplicated
         shell: powershell
         # Reads scripts by repo-root paths; see the note on the tray step above.
