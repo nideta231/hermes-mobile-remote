@@ -910,7 +910,10 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             val catalog = _models.value ?: runCatching { c.models() }.getOrNull()?.also { _models.value = it }
                 ?: return@launch note(line, "Couldn't load the model list from your PC.")
             val q = arg.lowercase()
-            val hit = catalog.options.firstOrNull { it.id.lowercase() == q || it.label.lowercase() == q }
+            val hit = catalog.options.firstOrNull {
+                it.id.lowercase() == q || it.label.lowercase() == q ||
+                    it.id.substringAfterLast('/').lowercase() == q
+            }
                 ?: catalog.options.filter { it.id.lowercase().contains(q) || it.label.lowercase().contains(q) }.singleOrNull()
             if (hit == null) {
                 val near = catalog.options.filter { it.label.lowercase().contains(q.take(4)) }.take(5).joinToString { it.label }

@@ -63,6 +63,22 @@ class CommandsAndUpdatesTest {
         assertTrue("xhigh" in without.reasoningLevels)
     }
 
+    @Test fun `a short model name shared by providers keeps its provider-qualified id`() {
+        // "claude-sonnet-5.5" is Copilot's own id and the tail of Nous Portal's
+        // "anthropic/claude-sonnet-5.5"; identical labels made the picker ambiguous.
+        val catalog = parseCatalog(JSONObject("""{"current":{},"providers":[
+            {"slug":"nous","name":"Nous Portal","models":["anthropic/claude-sonnet-5.5","deepseek/deepseek-v4.1-flash"]},
+            {"slug":"copilot","name":"GitHub Copilot","models":["claude-sonnet-5.5"]},
+            {"slug":"opencode-go","name":"OpenCode Go","models":["deepseek-v4.1-flash","kimi-k3"]}]}"""))
+        fun labelOf(provider: String, id: String): String =
+            catalog.options.first { it.provider == provider && it.id == id }.label
+        assertEquals("anthropic/claude-sonnet-5.5", labelOf("nous", "anthropic/claude-sonnet-5.5"))
+        assertEquals("claude-sonnet-5.5", labelOf("copilot", "claude-sonnet-5.5"))
+        assertEquals("deepseek/deepseek-v4.1-flash", labelOf("nous", "deepseek/deepseek-v4.1-flash"))
+        assertEquals("deepseek-v4.1-flash", labelOf("opencode-go", "deepseek-v4.1-flash"))
+        assertEquals("kimi-k3", labelOf("opencode-go", "kimi-k3"))
+    }
+
     @Test fun `version comparison is numeric`() {
         assertTrue(Updater.isNewer("0.10.0", "0.9.3"))
         assertTrue(Updater.isNewer("0.8.0", "0.7.1"))

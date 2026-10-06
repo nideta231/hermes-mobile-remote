@@ -119,16 +119,22 @@ fun parseSession(o: JSONObject) = SessionSummary(
 /** Build the picker list: featured models of every usable provider first, then the rest. */
 fun parseCatalog(o: JSONObject): ModelCatalog {
     val cur = o.optJSONObject("current")
-    val options = mutableListOf<ModelOption>()
+    val raw = mutableListOf<ModelOption>()
     o.optJSONArray("providers").objects().forEach { p ->
         val slug = p.str("slug") ?: return@forEach
         val name = p.str("name") ?: slug
         val featured = p.optJSONArray("featured").strings().toSet()
         val ordered = p.optJSONArray("models").strings().sortedBy { if (it in featured) "0$it" else "1$it" }
         ordered.forEach { m ->
-            options += ModelOption(slug, name, m, m.substringAfterLast('/'), p.optBoolean("current", false))
+            raw += ModelOption(slug, name, m, m.substringAfterLast('/'), p.optBoolean("current", false))
         }
     }
+    // The same short name can exist under several providers ("claude-sonnet-5.5" is Copilot's
+    // own id and also the tail of Nous Portal's "anthropic/claude-sonnet-5.5"). Identical labels
+    // in different groups made the picker ambiguous, and a tap could run a different model than
+    // the one the person meant; when a short name is not unique, show the full provider id.
+    val shortCounts = raw.groupingBy { it.label.lowercase() }.eachCount()
+    val options = raw.map { if ((shortCounts[it.label.lowercase()] ?: 0) > 1) it.copy(label = it.id) else it }
     val reasoning = o.optJSONObject("reasoning")
     return ModelCatalog(cur?.str("model"), cur?.str("provider"), options,
         reasoning?.str("default") ?: "medium",
