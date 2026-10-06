@@ -32,6 +32,7 @@ from .tailnet import TailnetClient, is_loopback, is_private_lan_ip, is_tailnet_i
 log = logging.getLogger("hermes_remote_bridge")
 
 ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+HEAVY_MESSAGE_FIELDS = ("reasoning", "reasoning_content", "reasoning_details", "codex_reasoning_items")
 CLIENT_REQ_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 APPROVAL_CHOICES = {"once", "session", "always", "deny"}
 
@@ -411,8 +412,13 @@ def create_app(cfg: Config, *, hermes: HermesClient | None = None, tailnet: Tail
     async def session_messages(session_id: str, limit: int = 200, offset: int = 0,
                                _: Device = Depends(device_auth)):
         params = {"limit": max(1, min(limit, 500)), "offset": max(0, offset)}
-        return (await hermes.request("GET", f"/api/sessions/{_check_id(session_id, 'session id')}/messages",
+        data = (await hermes.request("GET", f"/api/sessions/{_check_id(session_id, 'session id')}/messages",
                                      params=params, ok=(200,))).json()
+        # The phone never shows the model's reasoning; it is most of a long session's bytes.
+        for row in data.get("data", []):
+            for key in HEAVY_MESSAGE_FIELDS:
+                row.pop(key, None)
+        return data
 
     @app.post("/v1/sessions/{session_id}/fork", status_code=201)
     async def fork_session(session_id: str, body: CreateSession, _: Device = Depends(device_auth)):
@@ -446,6 +452,9 @@ def create_app(cfg: Config, *, hermes: HermesClient | None = None, tailnet: Tail
                                          params={"limit": min(500, count - cursor), "offset": cursor,
                                                  "order": "oldest"}, ok=(200,))).json()
             rows = page.get("data", [])
+            for row in rows:
+                for key in HEAVY_MESSAGE_FIELDS:
+                    row.pop(key, None)
         return {
             "messages": rows,
             "cursor": count,
