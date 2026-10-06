@@ -41,7 +41,7 @@ def _check_hermes(cfg: Config) -> tuple[str, str]:
                       "Is the Hermes gateway running? Try: hermes gateway status")
 
 
-def _check_service() -> tuple[str, str]:
+def _check_service(cfg: Config) -> tuple[str, str]:
     state = host().service_state("hermes-remote-bridge")
     if state == "unknown":
         return WARN, "No service manager found; run `hermes-remote-bridge serve` yourself"
@@ -49,28 +49,23 @@ def _check_service() -> tuple[str, str]:
         return OK, "Bridge service is running"
     # On Windows the Scheduled Task is only the logon trigger: it starts the tray, and the tray
     # supervises the bridge. A task sitting in Ready therefore says nothing about whether the
-    # bridge is up, so ask the thing that actually answers.
+    # bridge is up, so ask the thing that actually answers - on the port this run is configured
+    # for, not a compiled-in one.
     if host().name == "windows":
-        if _bridge_answers():
+        if _bridge_answers(cfg.port):
             return OK, "Bridge is running (the tray app supervises it; the task is the logon trigger)"
-        return FAIL, ("Bridge is not answering on port 8650. Start the tray, or: "
+        return FAIL, (f"Bridge is not answering on port {cfg.port}. Start the tray, or: "
                       "Start-ScheduledTask -TaskName 'Hermes Mobile Remote' "
                       "(logs: %LOCALAPPDATA%\\hermes-remote\\state\\bridge.log)")
     return FAIL, (f"Bridge service is {state}. Start it: systemctl --user enable --now hermes-remote-bridge "
                   f"(logs: journalctl --user -u hermes-remote-bridge)")
 
 
-def _bridge_answers() -> bool:
+def _bridge_answers(port: int) -> bool:
     """Is something serving the bridge port right now? An unauthenticated 401 counts: it means
     the bridge is up and refusing this request, which is exactly what it should do."""
     import socket
 
-    from .config import Config
-
-    try:
-        port = Config().port
-    except Exception:  # noqa: BLE001 - a broken config must not crash the check
-        return False
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=2):
             return True
@@ -129,7 +124,7 @@ def collect(cfg: Config) -> list[dict]:
     `level` is the severity; `message` is the same sentence `run` prints, kept in one place so
     the two can never disagree.
     """
-    found = {"hermes": _check_hermes(cfg), "service": _check_service(), "network": _check_network(cfg),
+    found = {"hermes": _check_hermes(cfg), "service": _check_service(cfg), "network": _check_network(cfg),
              "firewall": _check_firewall(cfg), "tailscale": _check_tailscale(), "devices": _check_devices(cfg)}
     return [{"id": name, "level": found[name][0], "message": found[name][1]} for name in CHECK_ORDER]
 
