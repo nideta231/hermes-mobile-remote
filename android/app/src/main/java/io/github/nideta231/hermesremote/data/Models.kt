@@ -88,7 +88,7 @@ fun JSONObject.str(name: String): String? = if (isNull(name)) null else optStrin
 
 fun JSONObject.dbl(name: String): Double? = if (isNull(name)) null else optDouble(name).takeUnless { it.isNaN() }
 
-fun JSONArray.objects(): List<JSONObject> = (0 until length()).mapNotNull { optJSONObject(it) }
+fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }
 
 fun JSONArray?.strings(): List<String> = if (this == null) emptyList() else (0 until length()).map { optString(it) }
 

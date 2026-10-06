@@ -85,6 +85,14 @@ class CommandsAndUpdatesTest {
         assertNull(Updater.parseRelease(JSONObject(release.toString()).put("draft", true)))
         assertNull(Updater.parseRelease(JSONObject("""{"tag_name":"v1","assets":[{"name":"x.zip","browser_download_url":"u"}]}""")))
     }
+
+    @Test fun `a response that omits its array is empty, not a crash`() {
+        // `strings()` has always treated an absent array as empty; `objects()` did not, so a
+        // bridge/older build that leaves the key out threw instead of degrading.
+        assertTrue(parseCommands(JSONObject("{}")).isEmpty())
+        assertTrue(parseCatalog(JSONObject("{}")).options.isEmpty())
+        assertNull(Updater.parseRelease(JSONObject("""{"tag_name":"v1"}""")))
+    }
 }
 
 class ToolResultTest {
