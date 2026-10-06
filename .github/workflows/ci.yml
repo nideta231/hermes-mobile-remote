@@ -68,6 +68,14 @@ jobs:
           $bin  = (Resolve-Path 'bridge/.venv/Scripts/hermes-remote-bridge.exe').Path
           $log  = Join-Path $env:RUNNER_TEMP 'tray-bridge.log'
           $stdout = Join-Path $env:RUNNER_TEMP 'tray-stdout.log'
+          # The installer writes a minimal config.toml (lan = true) before it starts anything,
+          # and a runner has never run it. Without that file a PC with no Tailscale is a fatal
+          # misconfiguration for the bridge: it retries Tailscale for ~60 s and then exits with
+          # "Could not determine the Tailscale owner" instead of serving.
+          $confDir = Join-Path $env:LOCALAPPDATA 'hermes-remote\config'
+          New-Item -ItemType Directory -Force -Path $confDir | Out-Null
+          $confFile = Join-Path $confDir 'config.toml'
+          if (-not (Test-Path $confFile)) { Set-Content -Path $confFile -Encoding ASCII -Value 'lan = true' }
           # A healthy tray prints nothing and then blocks in Application.Run(), so it cannot be
           # run in the foreground here: start it, prove it came up, and stop it again.
           $p = Start-Process powershell.exe -PassThru -WindowStyle Hidden `
@@ -82,7 +90,8 @@ jobs:
           }
           if (-not $up) {
             Get-Content "$stdout.err" -ErrorAction SilentlyContinue | Select-Object -First 20
-            Get-Content $log -ErrorAction SilentlyContinue | Select-Object -First 20
+            # The log's tail: a restart loop appends, and the last failure is the live one.
+            Get-Content $log -ErrorAction SilentlyContinue | Select-Object -Last 20
             throw 'the tray did not bring the bridge up'
           }
           "tray pid $($p.Id); bridge answered on 8650 after ${i}s"
