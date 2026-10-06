@@ -13,9 +13,8 @@
 
     The Scheduled Task starts bridge\windows\tray.ps1, which runs the bridge, shows its state in
     the notification area, and handles trusting a network and pairing a phone. Turn start-at-logon
-    off from the tray menu. bridge\windows
-un-bridge.ps1 is the headless equivalent for a session
-    with no desktop (an RDP session).
+    off from the tray menu. bridge\windows\run-bridge.ps1 is the headless equivalent for a
+    session with no desktop (an RDP session).
 
     Safe to re-run. Needs no admin rights except for the optional firewall rule, which asks first
     (one UAC prompt). If PowerShell blocks the script, run it as:
