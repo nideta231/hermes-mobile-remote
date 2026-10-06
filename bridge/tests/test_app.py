@@ -28,10 +28,30 @@ class FakeTailnet:
         pass
 
 
+class TailscaleDown:
+    """What TailnetClient looks like when the daemon is down or the CLI is absent."""
+
+    async def whois(self, addr):
+        return None
+
+    async def status_self_ips(self):
+        raise RuntimeError("tailscale not running")
+
+    async def status(self):
+        raise RuntimeError("tailscale not running")
+
+    async def aclose(self):
+        pass
+
+
 class FakeHermes:
     def __init__(self, responses=None):
         self.calls = []
         self.responses = responses or {}
+
+    async def health(self):
+        return {"status": "ok", "version": "1.2.3", "gateway_state": "running",
+                "readiness": {"status": "ok", "checks": {}}}
 
     async def request(self, method, path, **kw):
         self.calls.append((method, path, kw))
@@ -429,3 +449,29 @@ def test_tls_identity_is_created_once_with_private_key(tmp_path):
     if os.name == "posix":  # Windows has no mode bits; the profile ACL protects the key
         assert oct(key.stat().st_mode & 0o777) == "0o600"
     assert cert_pin(ensure_identity(tmp_path / "tls")[0]) == pin  # stable across restarts
+
+
+def _app_with_tailnet(tmp_path, tailnet):
+    cfg = Config(devices_file=tmp_path / "devices.json", audit_log=tmp_path / "audit.log")
+    store = DeviceStore(cfg.devices_file)
+    _, token = store.pair("phone")
+    app = create_app(cfg, hermes=FakeHermes(), tailnet=tailnet, devices=store,
+                     owner_login="me@example.com")
+    return client(app, "127.0.0.1"), {"Authorization": f"Bearer {token}"}
+
+
+def test_desktop_endpoint_degrades_when_tailscale_is_down(tmp_path):
+    """Tailscale is optional: /v1/desktop must say what is missing, not fail as a 500."""
+    c, auth = _app_with_tailnet(tmp_path, TailscaleDown())
+    r = c.get("/v1/desktop", headers=auth)
+    assert r.status_code == 503 and r.json()["error"]["code"] == "desktop_unavailable"
+    # The rest of the bridge already treats the same condition as an unreachable component.
+    assert c.get("/v1/status", headers=auth).json()["components"]["tailscale"]["status"] == "unreachable"
+
+
+def test_desktop_endpoint_offers_the_tailnet_address(tmp_path):
+    c, auth = _app_with_tailnet(tmp_path, FakeTailnet({}))
+    body = c.get("/v1/desktop", headers=auth).json()
+    assert body["protocol"] == "rdp" and body["host"] == "100.1.2.3"
+    assert body["dns_name"] == "pc.ts.net" and body["port"] == 3389
+    assert body["rdp_uri"].endswith(":3389")

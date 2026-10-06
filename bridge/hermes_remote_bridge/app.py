@@ -355,8 +355,18 @@ def create_app(cfg: Config, *, hermes: HermesClient | None = None, tailnet: Tail
 
     @app.get("/v1/desktop")
     async def desktop(_: Device = Depends(device_auth)):
-        ts = await tailnet.status()
-        ips = ts["Self"]["TailscaleIPs"]
+        # RDP is handed off over the tailnet, so with Tailscale down there is no address to
+        # offer. Tailscale is optional everywhere else (see /v1/status), so say what is missing
+        # instead of failing as an unhandled 500.
+        try:
+            ts = await tailnet.status()
+            ips = ts["Self"]["TailscaleIPs"]
+        except Exception as exc:
+            raise ApiError(503, "desktop_unavailable",
+                           "Remote desktop needs Tailscale on the PC and it isn't reachable") from exc
+        if not ips:
+            raise ApiError(503, "desktop_unavailable",
+                           "Tailscale is up but reports no address for this PC")
         return {"protocol": "rdp", "host": next((ip for ip in ips if "." in ip), ips[0]),
                 "dns_name": ts["Self"].get("DNSName", "").rstrip("."), "port": cfg.krdp_port,
                 "username": getpass.getuser(),

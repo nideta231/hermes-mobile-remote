@@ -57,7 +57,7 @@ still checked on connect), `ip=` (the addresses actually served) and `v=2`.
 | GET | `/healthz` | No auth. Liveness only. |
 | GET | `/v1/me` | `{device{id,name,created_at}, peer_node, via, port, addresses{lan[],tailnet[]}, lan_scheme, network, bridge_version}`. `via` is `lan` or `tailnet`; `addresses` lists every address served right now so the app can switch; `network` is `{id, name, interface, trusted}` or null. |
 | GET | `/v1/status` | `components.{bridge, hermes, model, desktop, tailscale}`. Each component reports its own status, so the app can show which part is down. |
-| GET | `/v1/desktop` | RDP connection info: `protocol, host, dns_name, port, username, rdp_uri`. |
+| GET | `/v1/desktop` | RDP connection info: `protocol, host, dns_name, port, username, rdp_uri`. RDP rides on the tailnet, so with Tailscale down this is 503 `desktop_unavailable` rather than a failure — Tailscale is optional, as `/v1/status` already reports. |
 | GET | `/v1/sessions?limit&offset` | Passes through Hermes: `{data[], has_more}`. |
 | POST | `/v1/sessions` `{title?}` | Returns 201 `{session{id,…}}`. |
 | GET | `/v1/sessions/{id}` | Hermes session metadata, plus `active_run` (null or a run snapshot). |
