@@ -60,6 +60,8 @@ jobs:
           'devices/trust JSON keys present'
       - name: The tray starts the bridge and stops it again
         shell: powershell
+        # Repo-root paths below; the job's default working directory is bridge/.
+        working-directory: .
         run: |
           $ErrorActionPreference = 'Continue'
           $tray = (Resolve-Path 'bridge/windows/tray.ps1').Path
@@ -104,6 +106,8 @@ jobs:
           'tray started the bridge, and stopped it on exit'
       - name: The supervisor is shared, not duplicated
         shell: powershell
+        # Reads scripts by repo-root paths; see the note on the tray step above.
+        working-directory: .
         run: |
           # The policy lives once, in supervise.ps1, and both entry points reach it through
           # run-bridge.ps1. A copy pasted into the tray is the drift we are avoiding.
@@ -119,6 +123,7 @@ jobs:
           'supervisor policy lives in exactly one file'
       - name: Menu handlers capture their own loop variable
         shell: powershell
+        working-directory: .
         run: |
           # A bare { $name } inside a foreach shares one variable across every closure, so all
           # the "revoke" and "remove" items acted on the LAST entry in the list: clicking
