@@ -216,9 +216,12 @@ Info "starting the tray (bridge log: $log)"
 # start"), which looks identical to "not run yet". Start the tray directly instead, so the
 # bridge is up in this session whether or not the trigger fires, and the task remains the
 # logon path for next time. The tray's single-instance mutex makes the overlap harmless.
-$trayProc = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList @(
-    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
-    '-File', $script, '-Bin', $Bin, '-LogFile', $log)
+#
+# Start-Process joins an -ArgumentList array with spaces and does not quote the elements, so a
+# path with a space (which this installer is tested against) would split into extra arguments and
+# the tray would exit at once. Build the command line the way the task action does: quoted paths.
+$trayArgs = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -Bin "{1}" -LogFile "{2}"' -f $script, $Bin, $log
+$trayProc = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList $trayArgs
 Info "tray started (pid $($trayProc.Id))"
 
 # Don't claim success until the bridge answers. 401 is the right answer: it means the bridge is up

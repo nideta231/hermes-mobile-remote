@@ -149,9 +149,12 @@ function Start-Bridge {
     if ($script:SupervisorProc -and -not $script:SupervisorProc.HasExited) { return }
     $script:BridgeWanted = $true
     $runner = Join-Path $ScriptDir 'run-bridge.ps1'
-    $script:SupervisorProc = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList @(
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
-        '-File', $runner, '-Bin', $Bin, '-LogFile', $LogFile)
+    # Start-Process joins an -ArgumentList array with spaces and does not quote the elements, so a
+    # path with a space (which the installer is tested against) would split into extra arguments
+    # and the supervisor would exit at once, leaving the tray "starting" forever with no bridge.
+    # Build the command line the way the task action does: quoted paths.
+    $supervisorArgs = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -Bin "{1}" -LogFile "{2}"' -f $runner, $Bin, $LogFile
+    $script:SupervisorProc = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList $supervisorArgs
     $Health['state'] = 'starting'
     Update-Tray
     Write-TrayLog "bridge supervisor started (pid $($script:SupervisorProc.Id))"
