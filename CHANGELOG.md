@@ -3,6 +3,17 @@
 Releases are git tags; the version in the app comes from the tag. `git log v0.9.0..vX.Y.Z` is the
 authoritative history — this file only summarises what is worth knowing before upgrading.
 
+## v1.2.0
+
+- Markdown tables render as real tables: aligned columns, header row, borders, and sideways
+  scrolling for wide tables instead of raw `| a | b |` text.
+
+## v1.1.0
+
+- Pair several PCs and switch between them from the drawer; each PC is named by its hostname.
+- Pair from a QR picture (screenshot or photo) instead of the camera.
+- Ctrl+Enter sends from a hardware keyboard; Enter adds a newline.
+
 ## v1.0.0
 
 **Breaking: update the bridge and the app together.** A 1.x bridge does not serve 0.x apps, and a
