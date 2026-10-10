@@ -8,8 +8,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts.GetContent
 import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -60,7 +62,10 @@ import io.github.nideta231.hermesremote.ui.SessionsPane
 import io.github.nideta231.hermesremote.ui.SettingsActions
 import io.github.nideta231.hermesremote.ui.SettingsScreen
 import io.github.nideta231.hermesremote.ui.linkHealth
+import io.github.nideta231.hermesremote.data.QrImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Chat is home; the others are pages pushed on top of it. */
 enum class Page { CHAT, SETTINGS }
@@ -72,6 +77,22 @@ class MainActivity : ComponentActivity() {
 
     private val scanner = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { pairUri.value = it }
+    }
+    private val imageError = mutableStateOf<String?>(null)
+
+    // A picture of the pairing QR: a screenshot, or the PNG `pair --qr-png` wrote and a chat
+    // app (Telegram) passed along. GetContent also offers Files/Drive, not just the gallery.
+    private val imagePicker = registerForActivityResult(GetContent()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        imageError.value = null
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.Default) { runCatching { QrImage.decode(this@MainActivity, uri) }.getOrNull() }
+            when {
+                text == null -> imageError.value = "No QR code found in that picture. Try a sharper or uncropped image."
+                !text.startsWith("hermesremote:") -> imageError.value = "That QR code isn't a Hermes Remote pairing code."
+                else -> pairUri.value = text
+            }
+        }
     }
 
     // Asked right after pairing: without it a run still works, but the app can't say it
@@ -109,8 +130,9 @@ class MainActivity : ComponentActivity() {
         }
         val data = intent?.data ?: return
         if (data.scheme == "hermesremote") {
+            // A new code while paired adds that PC (or re-pairs it) without dropping the current one.
+            if (vm.pairing.value != null) vm.startAddingPc()
             pairUri.value = data.toString()
-            if (vm.pairing.value != null) vm.unpair() // explicit re-pair from a new code
         }
     }
 
@@ -119,19 +141,24 @@ class MainActivity : ComponentActivity() {
             .setBeepEnabled(false).setOrientationLocked(false))
     }
 
+    private fun pickImage() = runCatching { imagePicker.launch("image/*") }
+
     @Composable
     private fun App() {
         val pairing by vm.pairing.collectAsState()
-        AnimatedContent(pairing != null, transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(200)) }, label = "root") { paired ->
+        val adding by vm.addingPc.collectAsState()
+        AnimatedContent(pairing != null && !adding, transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(200)) }, label = "root") { paired ->
             if (!paired) {
-                PairScreen(pairUri.value, onScan = ::scan, onPair = {
+                PairScreen(pairUri.value, onScan = ::scan, onPickImage = { pickImage() }, onPair = {
                     vm.pair(it).also { err ->
                         if (err == null) {
                             pairUri.value = null
+                            imageError.value = null
                             askForNotifications()
                         }
                     }
-                })
+                }, imageError = imageError.value,
+                    onCancel = if (pairing != null) ({ pairUri.value = null; imageError.value = null; vm.cancelAddingPc() }) else null)
             } else {
                 PairedApp()
             }
@@ -153,6 +180,7 @@ class MainActivity : ComponentActivity() {
         val openModelPicker by vm.openModelPicker.collectAsState()
         val update by vm.update.collectAsState()
         val toast by vm.toast.collectAsState()
+        val pcs by vm.pcs.collectAsState()
 
         var page by rememberSaveable { mutableStateOf(Page.CHAT) }
         val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -182,6 +210,10 @@ class MainActivity : ComponentActivity() {
             setPinned = vm::setPinned,
             newChat = { vm.newChat(); go(Page.CHAT) },
             openSettings = { go(Page.SETTINGS) },
+            switchPc = { vm.switchPc(it); go(Page.CHAT) },
+            addPc = { scope.launch { drawer.close() }; vm.startAddingPc() },
+            renamePc = vm::renamePc,
+            forgetPc = vm::forgetPc,
         )
         val chatActions = ChatActions(
             send = vm::send, stop = vm::stop, steer = vm::steer, approve = vm::answerApproval,
@@ -219,7 +251,7 @@ class MainActivity : ComponentActivity() {
         if (wide) {
             Row(Modifier.fillMaxSize()) {
                 Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.width(320.dp).fillMaxHeight()) {
-                    SessionsPane(sessions, chat.sessionId, sessionActions)
+                    SessionsPane(sessions, chat.sessionId, sessionActions, pcs = pcs)
                 }
                 VerticalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                 Box(Modifier.weight(1f)) { content() }
@@ -227,7 +259,7 @@ class MainActivity : ComponentActivity() {
         } else {
             ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = page == Page.CHAT || drawer.isOpen, drawerContent = {
                 ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.width(320.dp)) {
-                    SessionsPane(sessions, chat.sessionId, sessionActions)
+                    SessionsPane(sessions, chat.sessionId, sessionActions, pcs = pcs)
                 }
             }) { content() }
         }

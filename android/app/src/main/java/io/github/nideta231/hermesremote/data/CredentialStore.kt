@@ -13,9 +13,11 @@ import javax.crypto.spec.GCMParameterSpec
 /**
  * Stores the pairing. The device token is encrypted with a non-exportable AES key held in the
  * Android Keystore; prefs are excluded from cloud backup and device transfer.
+ *
+ * One store per paired PC: [file] comes from [ProfileStore.pairingFile].
  */
-class CredentialStore(context: Context) {
-    private val prefs = context.getSharedPreferences("pairing", Context.MODE_PRIVATE)
+class CredentialStore(context: Context, file: String = "pairing") {
+    private val prefs = context.getSharedPreferences(file, Context.MODE_PRIVATE)
     private val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
     private fun key(): SecretKey {

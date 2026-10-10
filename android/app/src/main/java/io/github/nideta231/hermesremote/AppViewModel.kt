@@ -28,6 +28,7 @@ import io.github.nideta231.hermesremote.data.LiveLink
 import io.github.nideta231.hermesremote.data.LiveReducer
 import io.github.nideta231.hermesremote.data.ModelCatalog
 import io.github.nideta231.hermesremote.data.ModelOption
+import io.github.nideta231.hermesremote.data.ProfileStore
 import io.github.nideta231.hermesremote.data.Notifier
 import io.github.nideta231.hermesremote.data.Pairing
 import io.github.nideta231.hermesremote.data.REASONING_LEVELS
@@ -95,6 +96,9 @@ data class SessionsState(
     val live: Map<String, String> = emptyMap(),
 )
 
+/** A paired PC in the switcher. [name] is the PC's computer name, or the host it was paired at. */
+data class PairedPc(val id: String, val name: String, val url: String, val active: Boolean)
+
 /** Which address the app is using, and what else it could use. */
 data class ConnectionState(
     val activeUrl: String? = null,
@@ -136,8 +140,9 @@ data class UpdateState(
 data class ModelConfirm(val option: ModelOption, val message: String)
 
 class AppViewModel(private val app: Application) : AndroidViewModel(app) {
-    private val store = CredentialStore(app)
-    private val drafts = DraftStore(app)
+    private val profiles = ProfileStore(app)
+    private var store = CredentialStore(app, ProfileStore.pairingFile(profiles.activeId))
+    private var drafts = DraftStore(app, ProfileStore.draftsFile(profiles.activeId))
     private var bridgeAddresses: Map<String, List<String>>? = null
     private var client: BridgeClient? = null
     private var gateway: Gateway? = null
@@ -145,6 +150,14 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private val _pairing = MutableStateFlow(store.load())
     val pairing: StateFlow<Pairing?> = _pairing.asStateFlow()
+
+    /** Every paired PC, for the switcher. */
+    private val _pcs = MutableStateFlow<List<PairedPc>>(emptyList())
+    val pcs: StateFlow<List<PairedPc>> = _pcs.asStateFlow()
+
+    /** "Add a PC" is open: the pairing screen shows over the app, and a pairing lands in a new profile. */
+    private val _addingPc = MutableStateFlow(false)
+    val addingPc: StateFlow<Boolean> = _addingPc.asStateFlow()
 
     private val _chat = MutableStateFlow(ChatState())
     val chat: StateFlow<ChatState> = _chat.asStateFlow()
@@ -280,6 +293,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     init {
+        refreshPcs()
         _pairing.value?.let { start(it) }
         checkForUpdate(quiet = true)
         viewModelScope.launch {
@@ -361,6 +375,10 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             }
             if (me.optInt("protocol", 0) < MIN_BRIDGE_PROTOCOL) {
                 _toast.value = "Your PC runs an older bridge. Update it: run install.sh on the PC."
+            }
+            me.str("pc_name")?.takeIf { it.isNotBlank() }?.let { name ->
+                val cur = profiles.active()
+                if (cur.name.isBlank()) { profiles.rename(cur.id, name); refreshPcs() }
             }
             me.optJSONObject("network")?.let { n ->
                 _conn.update { it.copy(pcNetwork = n.str("name"), pcNetworkTrusted = n.optBoolean("trusted")) }
@@ -493,12 +511,24 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             val candidate = p.copy(url = url)
             try {
                 BridgeClient(candidate).me()
+                if (_pairing.value != null) {
+                    // Another PC while one is paired: its own profile. The same PC paired again
+                    // (same certificate, or same address) replaces its old pairing instead.
+                    val same = profiles.list().firstOrNull { pr ->
+                        val old = CredentialStore(app, ProfileStore.pairingFile(pr.id)).load() ?: return@firstOrNull false
+                        if (p.pin != null) old.pin == p.pin else old.url == p.url
+                    }
+                    teardown()
+                    activate((same ?: profiles.add()).id)
+                }
+                _addingPc.value = false
                 store.save(candidate)
                 val known = (listOf(p.url) + p.alternates).groupBy { u ->
                     if (Tailnet.isLanHost(EndpointResolver.hostOf(u).orEmpty())) "lan" else "tailnet"
                 }.mapValues { (_, us) -> us.mapNotNull { EndpointResolver.hostOf(it) } }
                 store.bridgeAddresses = known
                 _pairing.value = candidate
+                refreshPcs()
                 start(candidate)
                 return null
             } catch (t: Throwable) {
@@ -509,17 +539,84 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         return lastError?.let(::describe)
     }
 
+    /** Forget the PC this app is on now, and move to the next paired one (if any). */
     fun unpair() {
+        teardown()
+        store.clear()
+        drafts.clearAll()
+        val gone = profiles.activeId
+        // The legacy slot keeps its file names, so it stays in the list as the empty fallback.
+        val next = profiles.remove(gone)
+        activate(next)
+        _pairing.value = store.load()
+        refreshPcs()
+        _pairing.value?.let { start(it) }
+    }
+
+    /** Talk to another paired PC. Its chats, drafts and addresses come back as they were left. */
+    fun switchPc(id: String) {
+        if (id == profiles.activeId && _pairing.value != null) return
+        if (profiles.list().none { it.id == id }) return
+        teardown()
+        activate(id)
+        _pairing.value = store.load()
+        refreshPcs()
+        _pairing.value?.let { start(it) }
+    }
+
+    /** Forget any paired PC; forgetting the one in use is [unpair]. */
+    fun forgetPc(id: String) {
+        if (id == profiles.activeId) return unpair()
+        CredentialStore(app, ProfileStore.pairingFile(id)).clear()
+        DraftStore(app, ProfileStore.draftsFile(id)).clearAll()
+        profiles.remove(id)
+        refreshPcs()
+    }
+
+    fun renamePc(id: String, name: String) {
+        if (name.isBlank()) return
+        profiles.rename(id, name)
+        refreshPcs()
+    }
+
+    fun startAddingPc() { _addingPc.value = true }
+    fun cancelAddingPc() { _addingPc.value = false }
+
+    private fun activate(id: String) {
+        profiles.activeId = id
+        store = CredentialStore(app, ProfileStore.pairingFile(id))
+        drafts = DraftStore(app, ProfileStore.draftsFile(id))
+        _reasoning.value = store.reasoningEffort
+        _chat.value = ChatState(draft = drafts.get(null), reasoning = store.reasoningEffort)
+    }
+
+    /** Drop every link and screen state of the current PC (its saved files stay). */
+    private fun teardown() {
+        openJob?.cancel()
         gatewayJobs.forEach { it.cancel() }
         gatewayJobs = emptyList()
         LiveLink.close()
         gateway = null
-        store.clear()
         client = null
+        bridgeAddresses = null
         _pairing.value = null
         _chat.value = ChatState()
         _sessions.value = SessionsState()
         _system.value = SystemState()
+        _models.value = null
+        _modelChoice.value = null
+        _confirm.value = null
+        _conn.value = ConnectionState()
+    }
+
+    private fun refreshPcs() {
+        val active = profiles.activeId
+        _pcs.value = profiles.list().mapNotNull { pr ->
+            val saved = if (pr.id == active) _pairing.value ?: store.load()
+                else CredentialStore(app, ProfileStore.pairingFile(pr.id)).load()
+            saved ?: return@mapNotNull null
+            PairedPc(pr.id, pr.name.ifBlank { EndpointResolver.hostOf(saved.url) ?: "PC" }, saved.url, pr.id == active)
+        }
     }
 
     // ------------------------------------------------------------ app lifecycle

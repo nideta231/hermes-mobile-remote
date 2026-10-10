@@ -15,7 +15,7 @@ import android.content.SharedPreferences
  */
 class DraftStore(private val prefs: SharedPreferences) {
 
-    constructor(context: Context) : this(context.getSharedPreferences("drafts", Context.MODE_PRIVATE))
+    constructor(context: Context, file: String = "drafts") : this(context.getSharedPreferences(file, Context.MODE_PRIVATE))
 
     fun get(sessionId: String?): String = prefs.getString(key(sessionId), "").orEmpty()
 
@@ -26,6 +26,11 @@ class DraftStore(private val prefs: SharedPreferences) {
 
     fun clear(sessionId: String?) {
         prefs.edit().remove(key(sessionId)).apply()
+    }
+
+    /** Forget every draft (the PC was unpaired). */
+    fun clearAll() {
+        prefs.edit().clear().apply()
     }
 
     /** Drop drafts for sessions that no longer exist, keeping the current and undrafted ones. */

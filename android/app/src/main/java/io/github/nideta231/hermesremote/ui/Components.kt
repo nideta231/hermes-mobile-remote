@@ -84,6 +84,8 @@ object Glyphs {
     val Steer = line("M9 10l-5 5 5 5", "M20 4v7a4 4 0 0 1-4 4H4")
     val Download = line("M12 3v12", "M7 10l5 5 5-5", "M5 21h14")
     val Qr = line("M3 3h7v7H3z", "M14 3h7v7h-7z", "M3 14h7v7H3z", "M14 14h3v3h-3z", "M20 14v.01", "M14 20h.01", "M20 20h.01", "M17 17h3")
+    val Image = line("M3 5h18v14H3z", "M8.5 10.5a1.5 1.5 0 1 0 0-.01", "M21 15l-5-5L5 19")
+    val Plus = line("M12 5v14", "M5 12h14")
     val Close = line("M6 6l12 12", "M18 6L6 18")
     val Back = line("M19 12H5", "M12 5l-7 7 7 7")
     val More = line("M12 6h.01", "M12 12h.01", "M12 18h.01")

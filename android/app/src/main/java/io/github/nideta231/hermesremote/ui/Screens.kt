@@ -73,7 +73,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.offset
 import io.github.nideta231.hermesremote.ConnectionState
+import io.github.nideta231.hermesremote.PairedPc
 import io.github.nideta231.hermesremote.SessionsState
 import io.github.nideta231.hermesremote.SystemState
 import io.github.nideta231.hermesremote.UpdateState
@@ -98,6 +101,10 @@ class SessionActions(
     val setPinned: (String, Boolean) -> Unit,
     val newChat: () -> Unit,
     val openSettings: () -> Unit,
+    val switchPc: (String) -> Unit = {},
+    val addPc: () -> Unit = {},
+    val renamePc: (String, String) -> Unit = { _, _ -> },
+    val forgetPc: (String) -> Unit = {},
 )
 
 private fun groupOf(s: SessionSummary): String {
@@ -125,8 +132,11 @@ fun SessionsPane(
     currentId: String?,
     actions: SessionActions,
     modifier: Modifier = Modifier,
+    pcs: List<PairedPc> = emptyList(),
 ) {
     var query by remember { mutableStateOf("") }
+    var pcSheet by remember { mutableStateOf(false) }
+    val activePc = pcs.firstOrNull { it.active }
     var menuFor by remember { mutableStateOf<SessionSummary?>(null) }
     var renaming by remember { mutableStateOf<SessionSummary?>(null) }
     var deleting by remember { mutableStateOf<SessionSummary?>(null) }
@@ -145,9 +155,22 @@ fun SessionsPane(
                 Icon(Glyphs.Spark, null, tint = Gold, modifier = Modifier.size(16.dp))
             }
             Spacer(Modifier.width(10.dp))
-            Text("Hermes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            // The header doubles as the PC switcher: tap to pick another paired PC or add one.
+            Row(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable { pcSheet = true }.padding(vertical = 4.dp, horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f, fill = false)) {
+                    Text("Hermes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    activePc?.let {
+                        Text(it.name, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                Icon(Glyphs.Down, "Switch PC", modifier = Modifier.padding(start = 4.dp).size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             IconButton(onClick = actions.refresh) { Icon(Glyphs.Refresh, "Refresh", modifier = Modifier.size(20.dp)) }
         }
+        if (pcSheet) PcSheet(pcs, actions, onDismiss = { pcSheet = false })
         Button(onClick = actions.newChat, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
             Icon(Glyphs.Compose, null, modifier = Modifier.size(18.dp))
@@ -208,6 +231,68 @@ fun SessionsPane(
             text = { Text("“${s.displayTitle}” will be permanently removed from Hermes on your PC.") },
             confirmButton = { TextButton(onClick = { actions.delete(s.id); deleting = null }) { Text("Delete", color = Bad) } },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } })
+    }
+}
+
+/** Paired PCs: tap to switch, long-press to rename or forget, plus "Add PC". */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+private fun PcSheet(pcs: List<PairedPc>, actions: SessionActions, onDismiss: () -> Unit) {
+    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var menuFor by remember { mutableStateOf<PairedPc?>(null) }
+    var renaming by remember { mutableStateOf<PairedPc?>(null) }
+    var forgetting by remember { mutableStateOf<PairedPc?>(null) }
+    val haptics = LocalHapticFeedback.current
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 24.dp)) {
+            Text("Paired PCs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 12.dp, bottom = 8.dp))
+            pcs.forEach { pc ->
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                    .background(if (pc.active) Gold.copy(alpha = 0.13f) else Color.Transparent)
+                    .combinedClickable(
+                        onClick = { onDismiss(); if (!pc.active) actions.switchPc(pc.id) },
+                        onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menuFor = pc },
+                    ).padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Glyphs.Desktop, null, modifier = Modifier.size(20.dp), tint = if (pc.active) Gold else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(pc.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(pc.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (pc.active) Icon(Glyphs.Check, "In use", tint = Gold, modifier = Modifier.size(18.dp))
+                    IconButton(onClick = { menuFor = pc }) { Icon(Glyphs.More, "Options", modifier = Modifier.size(18.dp)) }
+                }
+            }
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onDismiss(); actions.addPc() }
+                .padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Glyphs.Plus, null, modifier = Modifier.size(20.dp), tint = Gold)
+                Spacer(Modifier.width(12.dp))
+                Text("Add PC", fontWeight = FontWeight.SemiBold, color = Gold)
+            }
+        }
+    }
+
+    menuFor?.let { pc ->
+        AlertDialog(onDismissRequest = { menuFor = null }, title = { Text(pc.name) },
+            text = { Text(pc.url) },
+            confirmButton = { TextButton(onClick = { menuFor = null; renaming = pc }) { Text("Rename") } },
+            dismissButton = { TextButton(onClick = { menuFor = null; forgetting = pc }) { Text("Forget", color = Bad) } })
+    }
+    renaming?.let { pc ->
+        var name by remember(pc.id) { mutableStateOf(pc.name) }
+        AlertDialog(onDismissRequest = { renaming = null }, title = { Text("Rename PC") },
+            text = { OutlinedTextField(name, { name = it }, singleLine = true, shape = RoundedCornerShape(14.dp)) },
+            confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { actions.renamePc(pc.id, name.trim()); renaming = null }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } })
+    }
+    forgetting?.let { pc ->
+        AlertDialog(onDismissRequest = { forgetting = null }, title = { Text("Forget ${pc.name}?") },
+            text = { Text("Removes its token and drafts from this phone. Also run `hermes-remote-bridge revoke <name>` on that PC to invalidate it there.") },
+            confirmButton = { TextButton(onClick = { forgetting = null; onDismiss(); actions.forgetPc(pc.id) }) { Text("Forget", color = Bad) } },
+            dismissButton = { TextButton(onClick = { forgetting = null }) { Text("Cancel") } })
     }
 }
 
@@ -500,7 +585,14 @@ private fun ApprovalPanel(state: SystemState, onPick: (String) -> Unit) {
 // ================================================================ Pairing
 
 @Composable
-fun PairScreen(initialUri: String?, onScan: () -> Unit, onPair: suspend (Pairing) -> String?) {
+fun PairScreen(
+    initialUri: String?,
+    onScan: () -> Unit,
+    onPickImage: () -> Unit,
+    onPair: suspend (Pairing) -> String?,
+    imageError: String? = null,
+    onCancel: (() -> Unit)? = null,
+) {
     val scope = rememberCoroutineScope()
     var url by remember { mutableStateOf("https://") }
     var token by remember { mutableStateOf("") }
@@ -520,25 +612,39 @@ fun PairScreen(initialUri: String?, onScan: () -> Unit, onPair: suspend (Pairing
     LaunchedEffect(initialUri) {
         if (initialUri != null) attempt(runCatching { PairingParser.parseUri(initialUri) })
     }
+    LaunchedEffect(imageError) { if (imageError != null) error = imageError }
+    onCancel?.let { BackHandler(onBack = it) }
 
     Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).statusBarsPadding().navigationBarsPadding()
         .padding(horizontal = 24.dp, vertical = 16.dp)) {
-        Spacer(Modifier.size(40.dp))
+        if (onCancel != null) {
+            TextButton(onClick = onCancel, modifier = Modifier.offset(x = (-12).dp)) { Text("Cancel") }
+        } else {
+            Spacer(Modifier.size(40.dp))
+        }
         Box(Modifier.size(72.dp).background(Gold.copy(alpha = 0.16f), CircleShape), contentAlignment = Alignment.Center) {
             Icon(Glyphs.Spark, null, tint = Gold, modifier = Modifier.size(34.dp))
         }
         Spacer(Modifier.size(20.dp))
-        Text("Hermes Remote", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-        Text("Your Hermes agent, from your phone.", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(if (onCancel != null) "Add another PC" else "Hermes Remote", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+        Text(if (onCancel != null) "Each PC keeps its own chats. Switch between them from the side menu."
+            else "Your Hermes agent, from your phone.", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.size(28.dp))
         Step(1, "On your PC, run", code = "hermes-remote-bridge pair phone")
-        Step(2, "Scan the QR code it shows")
+        Step(2, "Scan the QR code it shows, or pick a picture of it (add --qr-png qr.png to get a file you can send)")
         Spacer(Modifier.size(20.dp))
         Button(onClick = onScan, enabled = !busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
             contentPadding = PaddingValues(vertical = 16.dp)) {
             Icon(Glyphs.Qr, null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
             Text("Scan pairing code", fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.size(10.dp))
+        OutlinedButton(onClick = { error = null; onPickImage() }, enabled = !busy, modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(vertical = 14.dp)) {
+            Icon(Glyphs.Image, null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("Pair from an image", fontWeight = FontWeight.SemiBold)
         }
         AnimatedVisibility(busy) {
             Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
