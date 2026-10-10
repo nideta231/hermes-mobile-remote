@@ -78,6 +78,7 @@ object Glyphs {
     val Down = line("M12 5v14", "M6 13l6 6 6-6")
     val Chevron = line("M6 9l6 6 6-6")
     val Search = line("M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z", "M21 21l-5-5")
+    val Filter = line("M4 6h16", "M7 12h10", "M10 18h4")
     val Pin = line("M12 17v5", "M9 3h6l-1 6 4 4v2H6v-2l4-4z")
     val Stop = line("M7 7h10v10H7z")
     val Send = line("M12 19V5", "M5 12l7-7 7 7")

@@ -170,6 +170,7 @@ class MainActivity : ComponentActivity() {
         val pairing by vm.pairing.collectAsState()
         val chat by vm.chat.collectAsState()
         val sessions by vm.sessions.collectAsState()
+        val sessionView by vm.sessionView.collectAsState()
         val system by vm.system.collectAsState()
         val models by vm.models.collectAsState()
         val choice by vm.modelChoice.collectAsState()
@@ -205,6 +206,7 @@ class MainActivity : ComponentActivity() {
             open = { vm.openSession(it); go(Page.CHAT) },
             refresh = vm::refreshSessions,
             loadMore = vm::loadMoreSessions,
+            setView = vm::setSessionView,
             rename = vm::rename,
             delete = vm::delete,
             setPinned = vm::setPinned,
@@ -251,7 +253,7 @@ class MainActivity : ComponentActivity() {
         if (wide) {
             Row(Modifier.fillMaxSize()) {
                 Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.width(320.dp).fillMaxHeight()) {
-                    SessionsPane(sessions, chat.sessionId, sessionActions, pcs = pcs)
+                    SessionsPane(sessions, chat.sessionId, sessionActions, pcs = pcs, view = sessionView)
                 }
                 VerticalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                 Box(Modifier.weight(1f)) { content() }
@@ -259,7 +261,7 @@ class MainActivity : ComponentActivity() {
         } else {
             ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = page == Page.CHAT || drawer.isOpen, drawerContent = {
                 ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.width(320.dp)) {
-                    SessionsPane(sessions, chat.sessionId, sessionActions, pcs = pcs)
+                    SessionsPane(sessions, chat.sessionId, sessionActions, pcs = pcs, view = sessionView)
                 }
             }) { content() }
         }

@@ -15,6 +15,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -41,6 +43,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -82,12 +85,17 @@ import io.github.nideta231.hermesremote.SystemState
 import io.github.nideta231.hermesremote.UpdateState
 import io.github.nideta231.hermesremote.data.Pairing
 import io.github.nideta231.hermesremote.data.PairingParser
+import io.github.nideta231.hermesremote.data.ProjectRef
+import io.github.nideta231.hermesremote.data.SessionGrouping
+import io.github.nideta231.hermesremote.data.SessionOrdering
+import io.github.nideta231.hermesremote.data.SessionStatus
 import io.github.nideta231.hermesremote.data.SessionSummary
+import io.github.nideta231.hermesremote.data.SessionView
+import io.github.nideta231.hermesremote.data.arrangeSessions
 import io.github.nideta231.hermesremote.data.Transport
 import io.github.nideta231.hermesremote.data.TransportMode
 import kotlinx.coroutines.launch
 import java.text.DateFormat
-import java.util.Calendar
 import java.util.Date
 
 // ================================================================ Sessions
@@ -105,24 +113,8 @@ class SessionActions(
     val addPc: () -> Unit = {},
     val renamePc: (String, String) -> Unit = { _, _ -> },
     val forgetPc: (String) -> Unit = {},
+    val setView: (SessionView) -> Unit = {},
 )
-
-private fun groupOf(s: SessionSummary): String {
-    if (s.pinned) return "Pinned"
-    val ts = s.lastActive ?: return "Older"
-    val now = Calendar.getInstance()
-    val then = Calendar.getInstance().apply { timeInMillis = (ts * 1000).toLong() }
-    val days = ((now.timeInMillis - then.timeInMillis) / 86_400_000L).toInt()
-    return when {
-        now.get(Calendar.YEAR) == then.get(Calendar.YEAR) && now.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR) -> "Today"
-        days < 2 -> "Yesterday"
-        days < 7 -> "This week"
-        days < 31 -> "This month"
-        else -> "Older"
-    }
-}
-
-private val groupOrder = listOf("Pinned", "Today", "Yesterday", "This week", "This month", "Older")
 
 /** The session list. On phones it lives in the navigation drawer; on tablets beside the chat. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -133,20 +125,18 @@ fun SessionsPane(
     actions: SessionActions,
     modifier: Modifier = Modifier,
     pcs: List<PairedPc> = emptyList(),
+    view: SessionView = SessionView(),
 ) {
     var query by remember { mutableStateOf("") }
+    var filterSheet by remember { mutableStateOf(false) }
     var pcSheet by remember { mutableStateOf(false) }
     val activePc = pcs.firstOrNull { it.active }
     var menuFor by remember { mutableStateOf<SessionSummary?>(null) }
     var renaming by remember { mutableStateOf<SessionSummary?>(null) }
     var deleting by remember { mutableStateOf<SessionSummary?>(null) }
 
-    val grouped = remember(state.items, query) {
-        state.items
-            .filter { query.isBlank() || it.displayTitle.contains(query, true) || (it.preview?.contains(query, true) ?: false) }
-            .sortedWith(compareByDescending<SessionSummary> { it.pinned }.thenByDescending { it.lastActive ?: 0.0 })
-            .groupBy(::groupOf)
-            .toSortedMap(compareBy { groupOrder.indexOf(it) })
+    val grouped = remember(state.items, state.live, state.projects, view, query) {
+        arrangeSessions(state.items, view, state.live, state.projects, query)
     }
 
     Column(modifier.fillMaxHeight().statusBarsPadding().navigationBarsPadding()) {
@@ -177,7 +167,18 @@ fun SessionsPane(
             Spacer(Modifier.width(8.dp))
             Text("New chat", fontWeight = FontWeight.SemiBold)
         }
-        SearchField(query, { query = it }, "Search chats", Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+        Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            SearchField(query, { query = it }, "Search chats", Modifier.weight(1f))
+            // Group / sort / filter, like the desktop sidebar's filter menu. A gold dot marks a non-default view.
+            Box {
+                IconButton(onClick = { filterSheet = true }) {
+                    Icon(Glyphs.Filter, "Group, sort and filter", modifier = Modifier.size(20.dp),
+                        tint = if (view.customized) Gold else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (view.filtersActive) Box(Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 10.dp).size(7.dp).background(Gold, CircleShape))
+            }
+        }
+        if (filterSheet) SessionViewSheet(view, state.projects, actions.setView, onDismiss = { filterSheet = false })
 
         PullToRefreshBox(isRefreshing = state.loading && state.items.isNotEmpty(), onRefresh = actions.refresh,
             modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -187,9 +188,12 @@ fun SessionsPane(
                         Text(err, color = Bad, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp))
                     }
                 }
-                grouped.forEach { (group, list) ->
-                    item(key = "g-$group") { SectionLabel(group, Modifier.padding(start = 12.dp, top = 6.dp).animateItem()) }
-                    items(list, key = { it.id }) { s ->
+                grouped.forEach { group ->
+                    item(key = "g-${group.key}") {
+                        SectionLabel(if (view.grouping == SessionGrouping.DATE || group.label == "Pinned") group.label else "${group.label} · ${group.items.size}",
+                            Modifier.padding(start = 12.dp, top = 6.dp).animateItem())
+                    }
+                    items(group.items, key = { it.id }) { s ->
                         SessionRow(s, current = s.id == currentId, live = state.live[s.id],
                             modifier = Modifier.animateItem(),
                             onClick = { actions.open(s.id) }, onLongClick = { menuFor = s })
@@ -203,6 +207,11 @@ fun SessionsPane(
                         }
                         state.loading && state.items.isEmpty() ->
                             Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { TypingDots(Gold) }
+                        grouped.isEmpty() && view.filtersActive -> Column(Modifier.padding(20.dp)) {
+                            Text("No chats match the current filters.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            TextButton(onClick = { actions.setView(view.copy(statuses = emptySet(), projects = emptySet())) },
+                                contentPadding = PaddingValues(0.dp)) { Text("Clear filters", color = Gold) }
+                        }
                         grouped.isEmpty() -> Text(if (query.isBlank()) "No chats yet." else "Nothing matches “$query”.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(20.dp))
                     }
@@ -339,6 +348,56 @@ private fun SessionActionsSheet(s: SessionSummary, onDismiss: () -> Unit, onPin:
             PanelRow(if (s.pinned) "Unpin" else "Pin", icon = Glyphs.Pin, iconTint = Gold, onClick = onPin)
             PanelRow("Rename", icon = Glyphs.Edit, onClick = onRename)
             PanelRow("Delete", icon = Glyphs.Trash, iconTint = Bad, titleColor = Bad, onClick = onDelete)
+        }
+    }
+}
+
+/** Group by / sort by / status / project, mirroring the desktop sidebar's filter menu. Changes apply live. */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun SessionViewSheet(view: SessionView, projects: List<ProjectRef>, onChange: (SessionView) -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("View", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                TextButton(enabled = view.customized, onClick = { onChange(SessionView()) }) { Text("Reset") }
+            }
+            SectionLabel("Group by")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SessionGrouping.entries.forEach { g ->
+                    FilterChip(selected = view.grouping == g, onClick = { onChange(view.copy(grouping = g)) }, label = { Text(g.label) })
+                }
+            }
+            SectionLabel("Sort by")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SessionOrdering.entries.forEach { o ->
+                    FilterChip(selected = view.ordering == o, onClick = { onChange(view.copy(ordering = o)) }, label = { Text(o.label) })
+                }
+            }
+            SectionLabel("Status")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SessionStatus.entries.forEach { st ->
+                    val on = st in view.statuses
+                    FilterChip(selected = on, label = { Text(st.label) },
+                        onClick = { onChange(view.copy(statuses = if (on) view.statuses - st else view.statuses + st)) })
+                }
+            }
+            SectionLabel("Project")
+            if (projects.isEmpty()) {
+                Text("No projects on this PC.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                // The backend lists its "Home" bucket (chats outside every project) among the projects.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    projects.forEach { p ->
+                        val on = p.id in view.projects
+                        FilterChip(selected = on, label = { Text(if (p.id == SessionView.NO_PROJECT) SessionView.NO_PROJECT_LABEL else p.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            onClick = { onChange(view.copy(projects = if (on) view.projects - p.id else view.projects + p.id)) })
+                    }
+                }
+            }
+            Text("Empty filters show everything. Pinned chats stay on top.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
         }
     }
 }

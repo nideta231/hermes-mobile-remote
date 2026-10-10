@@ -12,6 +12,9 @@ import androidx.lifecycle.viewModelScope
 import io.github.nideta231.hermesremote.data.AppUpdate
 import io.github.nideta231.hermesremote.data.BridgeClient
 import io.github.nideta231.hermesremote.data.BridgeException
+import io.github.nideta231.hermesremote.data.ProjectRef
+import io.github.nideta231.hermesremote.data.SessionView
+import io.github.nideta231.hermesremote.data.SessionViewStore
 import io.github.nideta231.hermesremote.data.ChatItem
 import io.github.nideta231.hermesremote.data.ComponentStatus
 import io.github.nideta231.hermesremote.data.CredentialStore
@@ -94,6 +97,8 @@ data class SessionsState(
     val error: String? = null,
     /** Stored id → live status for sessions doing something right now (the sidebar shimmer). */
     val live: Map<String, String> = emptyMap(),
+    /** Projects from `projects.tree`, for grouping and filtering the drawer by project. */
+    val projects: List<ProjectRef> = emptyList(),
 )
 
 /** A paired PC in the switcher. [name] is the PC's computer name, or the host it was paired at. */
@@ -164,6 +169,16 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private val _sessions = MutableStateFlow(SessionsState())
     val sessions: StateFlow<SessionsState> = _sessions.asStateFlow()
+
+    /** How the drawer groups, sorts and filters sessions; persisted across launches. */
+    private val viewStore = SessionViewStore(app)
+    private val _sessionView = MutableStateFlow(viewStore.load())
+    val sessionView: StateFlow<SessionView> = _sessionView.asStateFlow()
+
+    fun setSessionView(v: SessionView) {
+        _sessionView.value = v
+        viewStore.save(v)
+    }
 
     private val _system = MutableStateFlow(SystemState())
     val system: StateFlow<SystemState> = _system.asStateFlow()
@@ -826,11 +841,26 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                 _sessions.update { it.copy(items = list, loading = false, hasMore = more, error = null) }
                 val open = list.firstOrNull { it.id == _chat.value.sessionId }
                 if (open != null) _chat.update { it.copy(pinned = open.pinned, title = if (it.title == "New chat") open.displayTitle else it.title) }
+                refreshProjects()
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 _sessions.update { it.copy(loading = false, error = describe(t)) }
             }
         }
+    }
+
+    /** Project membership for the drawer. Best effort: older bridges refuse `projects.tree`. */
+    private suspend fun refreshProjects() {
+        val g = gateway ?: return
+        if (g.state.value != GatewayState.OPEN) return
+        val tree = runCatching { g.call("projects.tree", JSONObject(), 15_000) }.getOrNull() ?: return
+        val projects = tree.optJSONArray("projects").objects().mapNotNull { p ->
+            val id = p.str("id") ?: return@mapNotNull null
+            val ids = p.optJSONArray("sessionIds")
+            val members = (0 until (ids?.length() ?: 0)).mapNotNull { ids?.optString(it)?.takeIf(String::isNotBlank) }.toSet()
+            ProjectRef(id, p.str("label") ?: id, members)
+        }
+        if (projects != _sessions.value.projects) _sessions.update { it.copy(projects = projects) }
     }
 
     fun loadMoreSessions() {

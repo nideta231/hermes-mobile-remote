@@ -23,6 +23,10 @@ data class SessionSummary(
     val lastActive: Double?,
     val model: String?,
     val pinned: Boolean = false,
+    val startedAt: Double? = null,
+    val tokens: Long = 0,
+    val costUsd: Double = 0.0,
+    val unread: Boolean = false,
 ) {
     val displayTitle: String
         get() = title?.takeIf { it.isNotBlank() } ?: preview?.lineSequence()?.firstOrNull()?.take(80)
@@ -84,6 +88,11 @@ fun parseSession(o: JSONObject) = SessionSummary(
     lastActive = o.dbl("last_active") ?: o.dbl("last_activity_at") ?: o.dbl("started_at"),
     model = o.str("model"),
     pinned = o.optBoolean("pinned", false),
+    startedAt = o.dbl("started_at"),
+    // Same total the desktop sidebar shows and sorts by.
+    tokens = o.optLong("input_tokens", 0) + o.optLong("output_tokens", 0),
+    costUsd = o.dbl("actual_cost_usd") ?: o.dbl("estimated_cost_usd") ?: 0.0,
+    unread = o.optBoolean("unread", false),
 )
 
 fun parseApproval(id: String, p: JSONObject) = ApprovalRequest(

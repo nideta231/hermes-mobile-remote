@@ -3,6 +3,14 @@
 Releases are git tags; the version in the app comes from the tag. `git log v0.9.0..vX.Y.Z` is the
 authoritative history — this file only summarises what is worth knowing before upgrading.
 
+## v1.3.0
+
+- Chat drawer view options (filter icon next to search), matching the desktop app: group by date,
+  project or status; sort by last updated, created, status, tokens or cost; filter by status and
+  by project. Projects come from the desktop's project list. Pinned chats stay on top; the choice
+  is remembered.
+- Bridge: allows the read-only `projects.tree` call. Update the bridge on the PC too.
+
 ## v1.2.0
 
 - Markdown tables render as real tables: aligned columns, header row, borders, and sideways
