@@ -17,6 +17,7 @@ import logging
 import logging.handlers
 import os
 import re
+import socket
 import time
 from collections import defaultdict, deque
 from typing import Any
@@ -276,6 +277,7 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
                               "tailnet": await _tailnet_ips()},
                 "lan_scheme": "https",
                 "network": await asyncio.to_thread(network_info, trust) if cfg.lan else None,
+                "pc_name": socket.gethostname(),
                 "bridge_version": __version__, "protocol": PROTOCOL}
 
     @app.get("/v1/status")
