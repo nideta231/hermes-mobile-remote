@@ -288,7 +288,7 @@ function Build-Menu {
                 Invoke-Bridge -BridgeArgs @('trust', '--remove', $id) | Out-Null
                 $Health['trust'] = Get-BridgeJson @('trust', '--list', '--json')
                 Update-TrayAndMenu
-            })) | Out-Null
+            }.GetNewClosure())) | Out-Null   # $id is local to Build-Menu: without this it is empty on click
         } else {
             $netMenu.DropDownItems.Add((New-MenuItem "Trust $($current.name)" {
                 Invoke-Bridge -BridgeArgs @('trust') | Out-Null
@@ -358,7 +358,8 @@ function Build-Menu {
 
     # Start at logon. A Scheduled Task is invisible in Task Manager -> Startup, so this checkbox
     # is the only place the user can turn it off.
-    $startup = New-MenuItem 'Start at logon' { Set-StartAtLogon -Enabled $startup.Checked }
+    # $args[0] is the clicked item: $startup is local to Build-Menu and is $null inside the handler.
+    $startup = New-MenuItem 'Start at logon' { Set-StartAtLogon -Enabled $args[0].Checked }
     $startup.CheckOnClick = $true
     $startup.Checked = (Test-StartAtLogon)
     $menu.Items.Add($startup) | Out-Null
@@ -414,8 +415,10 @@ function Set-StartAtLogon([bool]$Enabled) {
             Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
                 -Principal $principal -Force | Out-Null
         } else {
-            Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+            # Unregister only. When the task launched this tray, Stop-ScheduledTask kills the tray
+            # itself (it is the task's process), so the Unregister after it never ran and the
+            # task stayed registered. Unregistering a running task leaves its process alone.
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop
         }
     } catch {
         Show-Problem 'start at logon' "Could not change it:`n$($_.Exception.Message)"
