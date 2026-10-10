@@ -82,6 +82,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -724,13 +730,25 @@ private fun Composer(
 ) {
     val text = state.draft
     val haptics = LocalHapticFeedback.current
+    val submit = {
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        // The view model clears the draft only when the send is accepted, so a
+        // refused send keeps its text here instead of losing it.
+        if (state.busy && !text.trimStart().startsWith("/")) actions.steer(text) else actions.send(text)
+    }
     Surface(color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 8.dp)) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(26.dp)) {
                 Column(Modifier.animateContentSize()) {
                     TextField(
                         value = text, onValueChange = actions.draft,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                        // Hardware keyboard: Ctrl+Enter sends; Enter and Shift+Enter stay a newline.
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).onPreviewKeyEvent { e ->
+                            val enter = e.key == Key.Enter || e.key == Key.NumPadEnter
+                            if (!enter || !e.isCtrlPressed) return@onPreviewKeyEvent false
+                            if (e.type == KeyEventType.KeyDown && !state.sending && text.isNotBlank()) submit()
+                            true
+                        },
                         placeholder = { Text(if (state.busy) "Steer the running task…" else "Message Hermes") },
                         maxLines = 7,
                         textStyle = MaterialTheme.typography.bodyLarge,
@@ -749,12 +767,7 @@ private fun Composer(
                                 tint = if (reasoning != null) Gold else MaterialTheme.colorScheme.onSurfaceVariant, onClick = onReasoning)
                         }
                         Spacer(Modifier.width(8.dp))
-                        SendButton(state, text, onSend = {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            // The view model clears the draft only when the send is accepted, so a
-                            // refused send keeps its text here instead of losing it.
-                            if (state.busy && !text.trimStart().startsWith("/")) actions.steer(text) else actions.send(text)
-                        }, onStop = actions.stop)
+                        SendButton(state, text, onSend = submit, onStop = actions.stop)
                     }
                 }
             }
