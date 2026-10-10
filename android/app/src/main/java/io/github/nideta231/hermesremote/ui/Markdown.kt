@@ -74,7 +74,8 @@ private fun splitTables(text: String, out: MutableList<MdBlock>) {
             val cols = headerCells.size
             val rows = mutableListOf<List<String>>()
             var j = i + 2
-            while (j < lines.size && lines[j].contains('|') && lines[j].isNotBlank()) {
+            // GFM: the body runs until a blank line or the start of another block; pipes are optional.
+            while (j < lines.size && lines[j].isNotBlank() && !startsBlock(lines[j])) {
                 val cells = splitRow(lines[j])
                 rows += List(cols) { cells.getOrElse(it) { "" } }
                 j++
@@ -97,6 +98,11 @@ private fun splitTables(text: String, out: MutableList<MdBlock>) {
     }
     flush()
 }
+
+private val blockStart = Regex("""^\s{0,3}(#{1,6}\s|>|[-*_]{3,}\s*$|```|~~~)""")
+
+/** A line that opens a heading, quote, rule or fence, which ends a table body. */
+private fun startsBlock(line: String) = blockStart.containsMatchIn(line)
 
 /** Cells of one table row; leading/trailing pipes are optional and `\|` stays a literal pipe. */
 internal fun splitRow(line: String): List<String> {
