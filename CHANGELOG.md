@@ -3,6 +3,28 @@
 Releases are git tags; the version in the app comes from the tag. `git log v0.9.0..vX.Y.Z` is the
 authoritative history — this file only summarises what is worth knowing before upgrading.
 
+## v1.4.0
+
+- Messages you steer into a running task now show your own words, not Hermes' wrapper text.
+- Opening a chat no longer floods it with Hermes' own notes shown as your messages. Rows Hermes
+  writes itself are now shown the way the desktop shows them:
+  - "Background process finished" and "Background agent work finished" become one-line notices,
+    using the desktop's own label when Hermes stored one.
+  - Model and personality switches, and resumed turns, become notices too.
+  - Context-compaction summaries, the "[STILL IN PROGRESS …]" restatement, and system notes are
+    hidden.
+- PC switcher redesigned like the account switchers in Instagram and Facebook:
+  - The drawer header shows the PC in use: a letter avatar, its name, and how many PCs are paired.
+  - Tap the header to open "Switch PC": one row per PC with its avatar and host, and a radio mark
+    on the PC in use. "Add PC" sits at the bottom.
+  - Long-press the header to jump straight to the next PC.
+  - Rename, Forget, and Switch are in each PC's ⋮ menu, or long-press its row.
+- Chat-list groups (date, project or status) collapse and expand when you tap their header. The
+  header shows how many chats the group holds. Collapsed groups are remembered per grouping, and
+  a search always opens every group so no match is hidden.
+- Release notes in the app and on GitHub are now this full changelog, newest first, so updating
+  across several versions shows everything that changed. The update card scrolls.
+
 ## v1.3.0
 
 - Chat drawer view options (filter icon next to search), matching the desktop app: group by date,

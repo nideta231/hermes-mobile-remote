@@ -117,6 +117,27 @@ class LogicTest {
         assertEquals("done", (items[3] as ChatItem.Assistant).text)
     }
 
+    @Test fun hermesNoticesStoredAsUserRowsAreNotShownAsUserMessages() {
+        val msgs = JSONArray("""[
+            {"role":"user","text":"real ask","row_id":1},
+            {"role":"user","text":"[IMPORTANT: Background process proc_1 completed normally (exit code 0).\nOutput: x","row_id":2},
+            {"role":"user","text":"[IMPORTANT: 2 background processes completed. Treat these","display_kind":"process_complete",
+             "display_metadata":"{\"display_text\": \"Background Process Finished: make\"}","row_id":3},
+            {"role":"user","text":"[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns...","row_id":4},
+            {"role":"user","text":"[STILL IN PROGRESS — this is the active request, restated]\nreal ask","row_id":5},
+            {"role":"user","text":"[System: The active model changed","display_kind":"model_switch","row_id":6},
+            {"role":"user","text":"[ASYNC DELEGATION BATCH COMPLETE — d1]","display_kind":"async_delegation_complete","row_id":7}
+        ]""")
+        val items = HistoryMapper.map(msgs)
+        assertEquals(listOf("real ask"), items.filterIsInstance<ChatItem.User>().map { it.text })
+        assertEquals(listOf("Background process finished", "Background Process Finished: make", "Model changed", "Background agent work finished"),
+            items.filterIsInstance<ChatItem.Notice>().map { it.text })
+        // An attach mid-turn whose trigger was a process notice shows the notice, not a user bubble.
+        val attached = io.github.nideta231.hermesremote.data.withInflight(emptyList(),
+            JSONObject("""{"user":"[IMPORTANT: Background process proc_9 completed","assistant":"","streaming":true}"""))
+        assertTrue(attached.single() is ChatItem.Notice)
+    }
+
     @Test fun inflightTurnIsAppendedWhenAttachingMidRun() {
         val history = listOf<ChatItem>(ChatItem.User("h1", "earlier"), ChatItem.Assistant("h2", "ok"))
         val items = io.github.nideta231.hermesremote.data.withInflight(history,

@@ -47,6 +47,8 @@ class CommandsAndUpdatesTest {
         assertEquals("/humanizer", displayUserText("[IMPORTANT: The user has invoked the \"humanizer\" skill, ... loaded below.]\n\nbody"))
         assertEquals("/plan add dark mode", displayUserText("[/plan — plan mode]\n\nrules\nTask to plan:\nadd dark mode\n\ncraft"))
         assertEquals("hello", displayUserText("hello"))
+        assertEquals("make it blue", displayUserText(
+            "[OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered once at this position]\nmake it blue\n[/OUT-OF-BAND USER MESSAGE]"))
         val items = HistoryMapper.map(JSONArray().put(JSONObject().put("row_id", 1).put("role", "user").put("text", skill)))
         assertEquals("/humanizer make it nicer", (items.single() as ChatItem.User).text)
     }

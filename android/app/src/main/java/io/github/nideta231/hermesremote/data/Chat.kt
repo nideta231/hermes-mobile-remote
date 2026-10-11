@@ -32,6 +32,8 @@ sealed interface ChatItem {
 private const val SKILL_PREFIX = "[IMPORTANT: The user has invoked the "
 private const val SKILL_INSTRUCTION = "The user has provided the following instruction alongside the skill invocation: "
 private const val PLAN_PREFIX = "[/plan — plan mode]"
+private const val STEER_OPEN = "[OUT-OF-BAND USER MESSAGE"
+private const val STEER_CLOSE = "[/OUT-OF-BAND USER MESSAGE]"
 
 /**
  * A user turn as the user typed it. Skills and /plan expand into long prompts before they reach
@@ -48,6 +50,13 @@ fun displayUserText(text: String): String {
     if (text.startsWith(PLAN_PREFIX)) {
         val task = text.substringAfter("Task to plan:\n", "").substringBefore("\n\n").trim()
         return if (task.isEmpty()) "/plan" else "/plan $task"
+    }
+    // A mid-turn steer is stored inside Hermes' marker wrapper; show the user's own words, as the desktop does.
+    val steerOpen = text.indexOf(STEER_OPEN)
+    if (steerOpen >= 0) {
+        val bodyStart = text.indexOf('\n', steerOpen).let { if (it < 0) return text else it + 1 }
+        val bodyEnd = text.indexOf(STEER_CLOSE, bodyStart)
+        if (bodyEnd >= 0) return text.substring(bodyStart, bodyEnd).trim()
     }
     return text
 }
@@ -83,6 +92,49 @@ private fun resultPreview(p: JSONObject): String? {
     }?.take(4000)
 }
 
+/** What a synthetic user row (written by Hermes, not typed by the user) shows as. */
+sealed interface SyntheticRow {
+    /** Not shown at all: a compaction restatement or a model-facing note. */
+    data object Drop : SyntheticRow
+    /** A one-line timeline notice, like the desktop's "background process finished". */
+    data class Notice(val text: String) : SyntheticRow
+}
+
+private fun displayText(metadata: Any?): String? {
+    val o = when (metadata) {
+        is JSONObject -> metadata
+        is String -> runCatching { JSONObject(metadata) }.getOrNull()
+        else -> null
+    } ?: return null
+    return o.str("display_text")?.trim()?.takeIf { it.isNotEmpty() }
+}
+
+/**
+ * Hermes stores its own notices (finished background processes and agents, model switches,
+ * the request it restates after compacting context) as user rows so strict providers accept
+ * them. They are not the user's words: classify them by `display_kind`, or by their fixed
+ * prefix for rows written before Hermes typed them. Null: a real user message.
+ */
+fun syntheticUserRow(text: String, kind: String?, metadata: Any? = null): SyntheticRow? {
+    when (kind) {
+        "hidden" -> return SyntheticRow.Drop
+        "model_switch" -> return SyntheticRow.Notice("Model changed")
+        "personality_switch" -> return SyntheticRow.Notice("Personality changed")
+        "auto_continue" -> return SyntheticRow.Notice("Resumed interrupted turn")
+        "async_delegation_complete" -> return SyntheticRow.Notice(displayText(metadata) ?: "Background agent work finished")
+        "process_complete", "internal_notification" -> return SyntheticRow.Notice(displayText(metadata) ?: "Background process finished")
+    }
+    val t = text.trimStart()
+    return when {
+        t.startsWith("[CONTEXT COMPACTION") || t.startsWith("[STILL IN PROGRESS") ||
+            t.startsWith("[System:") || t.startsWith("[System note:") -> SyntheticRow.Drop
+        t.startsWith("[IMPORTANT: Background process") || Regex("^\\[IMPORTANT: \\d+ background processes").containsMatchIn(t) ->
+            SyntheticRow.Notice("Background process finished")
+        t.startsWith("[ASYNC DELEGATION") -> SyntheticRow.Notice("Background agent work finished")
+        else -> null
+    }
+}
+
 /** Hermes' display transcript (`session.resume` / `session.history` messages) as chat items. */
 object HistoryMapper {
     fun map(messages: JSONArray?): List<ChatItem> {
@@ -92,7 +144,11 @@ object HistoryMapper {
             val id = if (m.has("row_id") && !m.isNull("row_id")) "r${m.optLong("row_id")}" else "i$i"
             val text = m.str("text").orEmpty()
             when (m.optString("role")) {
-                "user" -> if (text.isNotBlank()) items += ChatItem.User("h-$id", displayUserText(text))
+                "user" -> if (text.isNotBlank()) when (val s = syntheticUserRow(text, m.str("display_kind"), m.opt("display_metadata"))) {
+                    SyntheticRow.Drop -> {}
+                    is SyntheticRow.Notice -> items += ChatItem.Notice("h-$id", s.text)
+                    null -> items += ChatItem.User("h-$id", displayUserText(text))
+                }
                 "assistant" -> {
                     m.str("reasoning")?.takeIf { it.isNotBlank() }?.let { items += ChatItem.Thinking("h-$id-r", it.trim()) }
                     if (text.isNotBlank()) items += ChatItem.Assistant("h-$id", text.trim())
@@ -245,9 +301,16 @@ object LiveReducer {
 fun withInflight(history: List<ChatItem>, inflight: JSONObject?): List<ChatItem> {
     inflight ?: return history
     val out = history.toMutableList()
-    val user = inflight.str("user")?.let(::displayUserText)?.trim().orEmpty()
-    if (user.isNotEmpty() && (out.lastOrNull { it is ChatItem.User } as? ChatItem.User)?.text?.trim() != user) {
-        out += ChatItem.User("inflight-u", user)
+    val raw = inflight.str("user").orEmpty()
+    when (val s = syntheticUserRow(raw, inflight.str("display_kind"), inflight.opt("display_metadata"))) {
+        SyntheticRow.Drop -> {}
+        is SyntheticRow.Notice -> if ((out.lastOrNull() as? ChatItem.Notice)?.text != s.text) out += ChatItem.Notice("inflight-u", s.text)
+        null -> {
+            val user = displayUserText(raw).trim()
+            if (user.isNotEmpty() && (out.lastOrNull { it is ChatItem.User } as? ChatItem.User)?.text?.trim() != user) {
+                out += ChatItem.User("inflight-u", user)
+            }
+        }
     }
     val reply = inflight.str("assistant").orEmpty()
     if (reply.isNotBlank()) out += ChatItem.Assistant("inflight-a", reply.trimStart(), streaming = inflight.optBoolean("streaming", true))

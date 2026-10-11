@@ -59,6 +59,10 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+        # The notes are the full CHANGELOG.md from this tag's section down, so someone skipping
+        # versions sees everything since theirs. The app shows them on its update card.
         run: |
+          awk -v tag="## $GITHUB_REF_NAME" '$0 == tag {on = 1} on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          [ -s "$RUNNER_TEMP/notes.md" ] || { echo "::error::CHANGELOG.md has no '## $GITHUB_REF_NAME' section"; exit 1; }
           gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/HermesRemote-*.apk "$RUNNER_TEMP"/HermesRemote-*.apk.sha256 \
-            --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+            --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag

@@ -4,6 +4,10 @@ import android.net.Uri
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.border
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.rotate
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -134,29 +138,41 @@ fun SessionsPane(
     var menuFor by remember { mutableStateOf<SessionSummary?>(null) }
     var renaming by remember { mutableStateOf<SessionSummary?>(null) }
     var deleting by remember { mutableStateOf<SessionSummary?>(null) }
+    // Collapsed groups as "GROUPING/key", so collapsing "Today" never hides a project group of the same name.
+    var collapsedKeys by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
+    fun collapseKey(groupKey: String) = "${view.grouping.name}/$groupKey"
 
     val grouped = remember(state.items, state.live, state.projects, view, query) {
         arrangeSessions(state.items, view, state.live, state.projects, query)
     }
 
+    val haptics = LocalHapticFeedback.current
     Column(modifier.fillMaxHeight().statusBarsPadding().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(30.dp).background(Gold.copy(alpha = 0.16f), CircleShape), contentAlignment = Alignment.Center) {
-                Icon(Glyphs.Spark, null, tint = Gold, modifier = Modifier.size(16.dp))
-            }
-            Spacer(Modifier.width(10.dp))
-            // The header doubles as the PC switcher: tap to pick another paired PC or add one.
-            Row(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable { pcSheet = true }.padding(vertical = 4.dp, horizontal = 4.dp),
+        // Account switcher in the Instagram style: the header is the active PC (avatar + name + chevron).
+        // Tap opens the switcher; long-press jumps straight to the next PC.
+        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).clip(RoundedCornerShape(14.dp))
+                .combinedClickable(
+                    onClick = { pcSheet = true },
+                    onLongClick = {
+                        val next = nextPc(pcs)
+                        if (next != null) { haptics.performHapticFeedback(HapticFeedbackType.LongPress); actions.switchPc(next.id) }
+                        else pcSheet = true
+                    },
+                ).padding(vertical = 6.dp, horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f, fill = false)) {
-                    Text("Hermes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                    activePc?.let {
-                        Text(it.name, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
+                if (activePc != null) PcAvatar(activePc.name, 34.dp, ring = pcs.size > 1)
+                else Box(Modifier.size(34.dp).background(Gold.copy(alpha = 0.16f), CircleShape), contentAlignment = Alignment.Center) {
+                    Icon(Glyphs.Spark, null, tint = Gold, modifier = Modifier.size(16.dp))
                 }
-                Icon(Glyphs.Down, "Switch PC", modifier = Modifier.padding(start = 4.dp).size(16.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f, fill = false)) {
+                    Text(activePc?.name ?: "Hermes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(if (pcs.size > 1) "Hermes · ${pcs.size} PCs" else "Hermes", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+                Icon(Glyphs.Chevron, "Switch PC", modifier = Modifier.padding(start = 4.dp).size(18.dp))
             }
             IconButton(onClick = actions.refresh) { Icon(Glyphs.Refresh, "Refresh", modifier = Modifier.size(20.dp)) }
         }
@@ -189,11 +205,15 @@ fun SessionsPane(
                     }
                 }
                 grouped.forEach { group ->
+                    // A searched group is always open, so a match is never hidden behind a collapsed header.
+                    val ck = collapseKey(group.key)
+                    val closed = query.isBlank() && ck in collapsedKeys
                     item(key = "g-${group.key}") {
-                        SectionLabel(if (view.grouping == SessionGrouping.DATE || group.label == "Pinned") group.label else "${group.label} · ${group.items.size}",
-                            Modifier.padding(start = 12.dp, top = 6.dp).animateItem())
+                        GroupHeader(group.label, group.items.size, closed, Modifier.animateItem()) {
+                            collapsedKeys = ArrayList(if (ck in collapsedKeys) collapsedKeys - ck else collapsedKeys + ck)
+                        }
                     }
-                    items(group.items, key = { it.id }) { s ->
+                    if (!closed) items(group.items, key = { it.id }) { s ->
                         SessionRow(s, current = s.id == currentId, live = state.live[s.id],
                             modifier = Modifier.animateItem(),
                             onClick = { actions.open(s.id) }, onLongClick = { menuFor = s })
@@ -253,42 +273,66 @@ private fun PcSheet(pcs: List<PairedPc>, actions: SessionActions, onDismiss: () 
     var forgetting by remember { mutableStateOf<PairedPc?>(null) }
     val haptics = LocalHapticFeedback.current
 
+    // Instagram/Facebook account switcher: centred title, one row per account with a big avatar and a
+    // radio mark on the one in use, then "Add PC". Options (rename, forget) sit behind each row's ⋮.
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 24.dp)) {
-            Text("Paired PCs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(start = 12.dp, bottom = 8.dp))
+        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+            Text("Switch PC", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 4.dp))
+            Text("Each PC keeps its own chats", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
             pcs.forEach { pc ->
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                    .background(if (pc.active) Gold.copy(alpha = 0.13f) else Color.Transparent)
+                Row(Modifier.fillMaxWidth()
                     .combinedClickable(
                         onClick = { onDismiss(); if (!pc.active) actions.switchPc(pc.id) },
                         onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menuFor = pc },
-                    ).padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Glyphs.Desktop, null, modifier = Modifier.size(20.dp), tint = if (pc.active) Gold else MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.width(12.dp))
+                    ).padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    PcAvatar(pc.name, 52.dp, ring = pc.active)
+                    Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(pc.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(pc.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(pc.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(if (pc.active) "In use · ${hostOf(pc.url)}" else hostOf(pc.url), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    if (pc.active) Icon(Glyphs.Check, "In use", tint = Gold, modifier = Modifier.size(18.dp))
-                    IconButton(onClick = { menuFor = pc }) { Icon(Glyphs.More, "Options", modifier = Modifier.size(18.dp)) }
+                    RadioMark(pc.active)
+                    IconButton(onClick = { menuFor = pc }) { Icon(Glyphs.More, "Options for ${pc.name}", modifier = Modifier.size(18.dp)) }
                 }
             }
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onDismiss(); actions.addPc() }
-                .padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Glyphs.Plus, null, modifier = Modifier.size(20.dp), tint = Gold)
-                Spacer(Modifier.width(12.dp))
-                Text("Add PC", fontWeight = FontWeight.SemiBold, color = Gold)
+            Row(Modifier.fillMaxWidth().clickable { onDismiss(); actions.addPc() }
+                .padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(52.dp).background(MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape), contentAlignment = Alignment.Center) {
+                    Icon(Glyphs.Plus, null, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Text("Add PC", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    Text("Scan the pair QR from another PC", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }
 
     menuFor?.let { pc ->
-        AlertDialog(onDismissRequest = { menuFor = null }, title = { Text(pc.name) },
-            text = { Text(pc.url) },
-            confirmButton = { TextButton(onClick = { menuFor = null; renaming = pc }) { Text("Rename") } },
-            dismissButton = { TextButton(onClick = { menuFor = null; forgetting = pc }) { Text("Forget", color = Bad) } })
+        ModalBottomSheet(onDismissRequest = { menuFor = null }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+                Row(Modifier.padding(horizontal = 20.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    PcAvatar(pc.name, 40.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(pc.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(pc.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                Spacer(Modifier.size(8.dp))
+                if (!pc.active) PanelRow("Switch to ${pc.name}", icon = Glyphs.Check, iconTint = Gold,
+                    onClick = { menuFor = null; onDismiss(); actions.switchPc(pc.id) })
+                PanelRow("Rename", icon = Glyphs.Edit, onClick = { menuFor = null; renaming = pc })
+                PanelRow("Forget this PC", icon = Glyphs.Trash, iconTint = Bad, titleColor = Bad, onClick = { menuFor = null; forgetting = pc })
+            }
+        }
     }
     renaming?.let { pc ->
         var name by remember(pc.id) { mutableStateOf(pc.name) }
@@ -302,6 +346,53 @@ private fun PcSheet(pcs: List<PairedPc>, actions: SessionActions, onDismiss: () 
             text = { Text("Removes its token and drafts from this phone. Also run `hermes-remote-bridge revoke <name>` on that PC to invalidate it there.") },
             confirmButton = { TextButton(onClick = { forgetting = null; onDismiss(); actions.forgetPc(pc.id) }) { Text("Forget", color = Bad) } },
             dismissButton = { TextButton(onClick = { forgetting = null }) { Text("Cancel") } })
+    }
+}
+
+/** The PC after the active one, wrapping; null with fewer than two PCs. */
+private fun nextPc(pcs: List<PairedPc>): PairedPc? {
+    if (pcs.size < 2) return null
+    val i = pcs.indexOfFirst { it.active }
+    return pcs[(i + 1).mod(pcs.size)]
+}
+
+private fun hostOf(url: String) = Uri.parse(url).host ?: url
+
+private val avatarColors = listOf(Color(0xFFE8B54A), Color(0xFF5B9BE8), Color(0xFF5BC27A), Color(0xFFC77DDB), Color(0xFFE5675C), Color(0xFF4FC1C6))
+
+/** Letter avatar, colour stable per name. [ring]: the gold story-style ring that marks the PC in use. */
+@Composable
+private fun PcAvatar(name: String, size: androidx.compose.ui.unit.Dp, ring: Boolean = false) {
+    val color = avatarColors[(name.hashCode() and 0x7fffffff) % avatarColors.size]
+    val letters = name.split(Regex("[^A-Za-z0-9]+")).filter { it.isNotEmpty() }.take(2).joinToString("") { it.take(1) }.uppercase().ifEmpty { "?" }
+    Box(Modifier.size(size).then(if (ring) Modifier.border(2.dp, Gold, CircleShape).padding(3.dp) else Modifier)
+        .background(color.copy(alpha = 0.22f), CircleShape), contentAlignment = Alignment.Center) {
+        Text(letters, color = color, fontWeight = FontWeight.Bold, fontSize = (size.value * 0.34f).sp)
+    }
+}
+
+/** Filled radio dot for the account in use, empty ring for the others. */
+@Composable
+private fun RadioMark(selected: Boolean) {
+    Box(Modifier.size(22.dp).border(2.dp, if (selected) Gold else MaterialTheme.colorScheme.outline, CircleShape), contentAlignment = Alignment.Center) {
+        if (selected) Box(Modifier.size(12.dp).background(Gold, CircleShape))
+    }
+}
+
+/** Tappable group header: label, count and a chevron that turns when the group is collapsed. */
+@Composable
+private fun GroupHeader(label: String, count: Int, collapsed: Boolean, modifier: Modifier, onToggle: () -> Unit) {
+    val angle by animateFloatAsState(if (collapsed) -90f else 0f, label = "chevron")
+    Row(modifier.fillMaxWidth().padding(top = 4.dp).clip(RoundedCornerShape(10.dp)).clickable(onClick = onToggle)
+        .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Label and count share the weighted slot, so every chevron lines up on the right edge.
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            Text(label.uppercase(), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            Text("  $count", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+        }
+        Icon(Glyphs.Chevron, if (collapsed) "Expand $label" else "Collapse $label", modifier = Modifier.size(16.dp).rotate(angle),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -507,7 +598,8 @@ private fun UpdateBanner(u: UpdateState, onInstall: () -> Unit) {
                     LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp).clip(CircleShape))
                 } else {
                     available?.notes?.takeIf { it.isNotBlank() }?.let {
-                        Box(Modifier.padding(top = 6.dp).heightIn(max = 120.dp)) { MarkdownText(it.take(600)) }
+                        // Full changelog since this version: scroll inside the card instead of cutting it off.
+                        Box(Modifier.padding(top = 6.dp).heightIn(max = 260.dp).verticalScroll(rememberScrollState())) { MarkdownText(it) }
                     }
                     Button(onClick = onInstall, modifier = Modifier.padding(top = 10.dp)) { Text("Update now") }
                 }
