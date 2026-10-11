@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
@@ -49,6 +50,10 @@ import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.Dp
+import kotlinx.coroutines.delay
 
 /** Line icons drawn from SVG paths (24×24), so the app needs no icon dependency beyond the core set. */
 object Glyphs {
@@ -68,6 +73,7 @@ object Glyphs {
     val Wifi = line("M5 12.5a10 10 0 0 1 14 0", "M8.5 16a5 5 0 0 1 7 0", "M2 9a15 15 0 0 1 20 0", "M12 19.5h.01")
     val Globe = line("M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M3 12h18", "M12 3a14 14 0 0 1 0 18", "M12 3a14 14 0 0 0 0 18")
     val Offline = line("M2 2l20 20", "M8.5 16a5 5 0 0 1 7 0", "M5 12.5a10 10 0 0 1 4.7-2.6", "M12 19.5h.01", "M16.7 10.7A10 10 0 0 1 19 12.5")
+    val Doc = line("M14 3H6v18h12V7z", "M14 3v4h4", "M9 12h6", "M9 16h6")
     val Copy = line("M9 9h11v11H9z", "M5 15H4V4h11v1")
     val Terminal = line("M4 17l6-6-6-6", "M12 19h8")
     val Spark = line("M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z", "M19 17l.8 2.2L22 20l-2.2.8L19 23l-.8-2.2L16 20l2.2-.8z")
@@ -234,6 +240,28 @@ fun Pill(
                 Spacer(Modifier.width(5.dp))
             }
             Text(text, style = MaterialTheme.typography.labelMedium, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/**
+ * A visible copy button (a mouse or a PC keyboard has no long-press). Shows a check and
+ * "Copied" for a moment after a tap. [label] null: icon only.
+ */
+@Composable
+fun CopyButton(text: String, modifier: Modifier = Modifier, label: String? = "Copy", size: Dp = 15.dp) {
+    val clipboard = LocalClipboardManager.current
+    var copiedAt by remember { mutableIntStateOf(0) }
+    LaunchedEffect(copiedAt) { if (copiedAt > 0) { delay(1500); copiedAt = 0 } }
+    val done = copiedAt > 0
+    val tint = if (done) Ok else MaterialTheme.colorScheme.onSurfaceVariant
+    Row(modifier.clip(RoundedCornerShape(8.dp)).clickable { clipboard.setText(AnnotatedString(text)); copiedAt++ }
+        .padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(if (done) Glyphs.Check else Glyphs.Copy, if (label == null) (if (done) "Copied" else "Copy") else null,
+            tint = tint, modifier = Modifier.size(size))
+        if (label != null) {
+            Spacer(Modifier.width(5.dp))
+            Text(if (done) "Copied" else label, style = MaterialTheme.typography.labelMedium, color = tint)
         }
     }
 }

@@ -37,6 +37,7 @@ import io.github.nideta231.hermesremote.data.Pairing
 import io.github.nideta231.hermesremote.data.REASONING_LEVELS
 import io.github.nideta231.hermesremote.data.RpcException
 import io.github.nideta231.hermesremote.data.SessionSummary
+import io.github.nideta231.hermesremote.data.changesBetween
 import io.github.nideta231.hermesremote.data.SlashSuggestion
 import io.github.nideta231.hermesremote.data.Tailnet
 import io.github.nideta231.hermesremote.data.Transport
@@ -139,7 +140,14 @@ data class UpdateState(
     val progress: Float? = null,
     val checkedAt: Long? = null,
     val error: String? = null,
-)
+    /** The version whose top-of-screen banner the user closed; the banner returns for a newer one. */
+    val dismissed: String? = null,
+    /** After an update: what changed since the version that ran before, shown once. */
+    val whatsNew: String? = null,
+) {
+    /** The top-of-screen and drawer banner: an update the user hasn't closed (or one downloading). */
+    val banner: Boolean get() = progress != null || (available != null && available.version != dismissed)
+}
 
 /** An expensive model needs a yes before Hermes switches to it (the desktop asks the same). */
 data class ModelConfirm(val option: ModelOption, val message: String)
@@ -208,8 +216,15 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     val openModelPicker: StateFlow<Boolean> = _openModelPicker.asStateFlow()
 
     private val updater = Updater(app)
-    private val _update = MutableStateFlow(UpdateState(installed = updater.installedVersion))
+    private val appPrefs = app.getSharedPreferences("app", android.content.Context.MODE_PRIVATE)
+    private val _update = MutableStateFlow(UpdateState(installed = updater.installedVersion,
+        dismissed = appPrefs.getString(KEY_DISMISSED_UPDATE, null)))
     val update: StateFlow<UpdateState> = _update.asStateFlow()
+
+    /** CHANGELOG.md as bundled in this APK (see build.gradle.kts); empty if missing. */
+    val changelog: String by lazy {
+        runCatching { app.assets.open("CHANGELOG.md").bufferedReader().use { it.readText() } }.getOrDefault("")
+    }
 
     /** One-shot user-facing messages (snackbar). */
     private val _toast = MutableStateFlow<String?>(null)
@@ -221,9 +236,10 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     private var sessionsRefreshJob: Job? = null
 
     private val foregroundObserver = object : DefaultLifecycleObserver {
-        override fun onStart(owner: LifecycleOwner) { onForeground(); startHeartbeat(); startActivePolling() }
+        override fun onStart(owner: LifecycleOwner) { onForeground(); startHeartbeat(); startActivePolling(); startUpdateChecks() }
         override fun onStop(owner: LifecycleOwner) {
             heartbeatJob?.cancel()
+            updateCheckJob?.cancel()
             activeJob?.cancel()
             // A turn still running: keep the process (and the socket) up so its end or its
             // question can be notified. The service stops by itself once nothing runs.
@@ -310,7 +326,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     init {
         refreshPcs()
         _pairing.value?.let { start(it) }
-        checkForUpdate(quiet = true)
+        showWhatsNew()
         viewModelScope.launch {
             UpdateEvents.failure.collect { msg ->
                 if (msg != null) {
@@ -837,8 +853,16 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         if (!quiet) _sessions.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
             try {
-                val (list, more) = c.sessions(50, 0)
-                _sessions.update { it.copy(items = list, loading = false, hasMore = more, error = null) }
+                // Fetch every page up front (only titles and stats, ~100 per request): search and the
+                // drawer filters then cover all chats, and the drawer itself pages what it draws.
+                val list = ArrayList<SessionSummary>()
+                var more = true
+                while (more && list.size < MAX_SESSIONS) {
+                    val (page, next) = c.sessions(SESSIONS_PER_REQUEST, list.size)
+                    list += page
+                    more = next && page.isNotEmpty()
+                }
+                _sessions.update { it.copy(items = list.distinctBy { s -> s.id }, loading = false, hasMore = more, error = null) }
                 val open = list.firstOrNull { it.id == _chat.value.sessionId }
                 if (open != null) _chat.update { it.copy(pinned = open.pinned, title = if (it.title == "New chat") open.displayTitle else it.title) }
                 refreshProjects()
@@ -870,7 +894,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         _sessions.update { it.copy(loading = true) }
         viewModelScope.launch {
             try {
-                val (list, more) = c.sessions(50, cur.items.size)
+                val (list, more) = c.sessions(SESSIONS_PER_REQUEST, cur.items.size)
                 _sessions.update { s -> s.copy(items = (s.items + list).distinctBy { it.id }, loading = false, hasMore = more) }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
@@ -1230,13 +1254,66 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------ app updates
 
+    private var updateCheckJob: Job? = null
+    private var lastUpdateCheck = 0L
+
+    /**
+     * Automatic update checks while the app is on screen: at start and every [UPDATE_CHECK_EVERY].
+     * Opening the app again within that time does not ask GitHub again (its API is rate-limited).
+     */
+    private fun startUpdateChecks() {
+        updateCheckJob?.cancel()
+        updateCheckJob = viewModelScope.launch {
+            while (true) {
+                // Counted from the last attempt, failed ones too: offline must not mean a retry a minute.
+                val since = System.currentTimeMillis() - lastUpdateCheck
+                if (since >= UPDATE_CHECK_EVERY) { lastUpdateCheck = System.currentTimeMillis(); checkForUpdate(quiet = true) }
+                delay((UPDATE_CHECK_EVERY - since).coerceIn(60_000L, UPDATE_CHECK_EVERY))
+            }
+        }
+    }
+
+    /** Closes the top-of-screen banner for this version; Settings and the drawer still offer it. */
+    fun dismissUpdateBanner() {
+        val v = _update.value.available?.version ?: return
+        appPrefs.edit().putString(KEY_DISMISSED_UPDATE, v).apply()
+        _update.update { it.copy(dismissed = v) }
+    }
+
+    /**
+     * First start after an update: show what changed since the version that ran before. A fresh
+     * install shows nothing. Versions before 1.5.0 didn't record themselves, so an update from one of
+     * them shows the new version's changes only.
+     */
+    private fun showWhatsNew() {
+        val installed = updater.installedVersion
+        val last = appPrefs.getString(KEY_LAST_VERSION, null)
+        if (last == installed) return
+        val info = runCatching { app.packageManager.getPackageInfo(app.packageName, 0) }.getOrNull()
+        val freshInstall = last == null && info != null && info.firstInstallTime == info.lastUpdateTime
+        if (freshInstall || (last != null && !Updater.isNewer(installed, last))) { markWhatsNewSeen(); return }
+        val notes = changesBetween(changelog, last, installed)
+        if (notes.isBlank()) markWhatsNewSeen() else _update.update { it.copy(whatsNew = notes) }
+    }
+
+    fun markWhatsNewSeen() {
+        appPrefs.edit().putString(KEY_LAST_VERSION, updater.installedVersion).apply()
+        _update.update { it.copy(whatsNew = null) }
+    }
+
+    /** What the available update brings over this build: its notes cut to the versions in between. */
+    private fun updateNotes(u: AppUpdate): String =
+        changesBetween(u.notes, updater.installedVersion, u.version).ifBlank { u.notes }
+
     fun checkForUpdate(quiet: Boolean = false) {
         if (_update.value.checking || _update.value.progress != null) return
         _update.update { it.copy(checking = true, error = null) }
         viewModelScope.launch {
             try {
                 val found = updater.check()
-                _update.update { it.copy(available = found, checking = false, checkedAt = System.currentTimeMillis()) }
+                // The release notes are the whole changelog; keep only what is newer than this build.
+                _update.update { it.copy(available = found?.let { u -> u.copy(notes = updateNotes(u)) }, checking = false,
+                    checkedAt = System.currentTimeMillis()) }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 _update.update { it.copy(checking = false, error = if (quiet) null else "Couldn't check for updates: ${t.message}") }
@@ -1302,6 +1379,13 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     private companion object {
         /** Bridge protocol this app speaks (the WebSocket relay). */
         const val MIN_BRIDGE_PROTOCOL = 2
+        const val UPDATE_CHECK_EVERY = 6 * 60 * 60 * 1000L
+        const val KEY_LAST_VERSION = "last_version"
+        const val KEY_DISMISSED_UPDATE = "dismissed_update"
+        /** The bridge caps one /v1/sessions page at 100. */
+        const val SESSIONS_PER_REQUEST = 100
+        /** Upper bound for the drawer's up-front fetch; past it the old scroll-to-load takes over. */
+        const val MAX_SESSIONS = 2000
         val STREAM_EVENTS = setOf("message.delta", "reasoning.delta", "thinking.delta") // coalesced per frame
         /** Commands that change the transcript on the PC: re-read it after they run. */
         val RELOADING_COMMANDS = setOf("retry", "undo", "rollback", "clear")

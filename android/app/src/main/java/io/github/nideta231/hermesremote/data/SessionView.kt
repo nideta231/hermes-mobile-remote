@@ -114,6 +114,25 @@ fun arrangeSessions(
     return if (pinned.isEmpty()) groups else listOf(SessionGroup("Pinned", pinned)) + groups
 }
 
+/** Chats a drawer group shows before "Show more", and how many each tap adds. */
+const val SESSION_PAGE = 15
+
+/** A group as the drawer draws it: the first part of [group], and how many still wait behind "Show more". */
+data class GroupPage(val group: SessionGroup, val items: List<SessionSummary>, val remaining: Int)
+
+/**
+ * Pages each group on its own, after [arrangeSessions] has searched, filtered and sorted the whole
+ * list, so a search or filter always sees every chat and only the drawing is limited. [shown] holds
+ * the groups the user expanded with "Show more" (group key -> rows). The open chat [currentId] is
+ * never hidden behind "Show more".
+ */
+fun pageGroups(groups: List<SessionGroup>, shown: Map<String, Int>, currentId: String? = null, page: Int = SESSION_PAGE): List<GroupPage> =
+    groups.map { g ->
+        val current = currentId?.let { id -> g.items.indexOfFirst { it.id == id } } ?: -1
+        val n = maxOf(shown[g.key] ?: page, current + 1).coerceAtMost(g.items.size)
+        GroupPage(g, g.items.take(n), g.items.size - n)
+    }
+
 /** Persists the drawer's [SessionView] (shared across paired PCs, like desktop's per-app prefs). */
 class SessionViewStore(private val prefs: SharedPreferences) {
     constructor(context: Context) : this(context.getSharedPreferences("session_view", Context.MODE_PRIVATE))

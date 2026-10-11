@@ -3,6 +3,22 @@
 Releases are git tags; the version in the app comes from the tag. `git log v0.9.0..vX.Y.Z` is the
 authoritative history — this file only summarises what is worth knowing before upgrading.
 
+## v1.5.0
+
+- Long chat groups show 15 chats, then a "Show 15 more · N left" row. Search and the drawer
+  filters still cover every chat: the app loads the whole list and only draws it in pages.
+  The open chat is never hidden, and a new search, filter or PC starts each group at one page.
+- Copy buttons you can see, for when long-press isn't handy (mouse, PC, emulator):
+  - "Copy" under every finished reply copies the whole answer as markdown.
+  - Every code block shows its language and a "Copy" button that copies only the code.
+- Updates are checked automatically while the app is open: at start and every 6 hours.
+- A new version shows a strip under the chat's top bar (✕ hides it for that version) and a row
+  at the top of the drawer.
+- Tapping either opens "Update to X": what changed in every version between yours and the new
+  one, then Update now.
+- After an update the app shows "What's new" once, with the changes since the version you had.
+- Settings → Changelog lists every version's changes, read from the app itself (works offline).
+
 ## v1.4.0
 
 - Messages you steer into a running task now show your own words, not Hermes' wrapper text.

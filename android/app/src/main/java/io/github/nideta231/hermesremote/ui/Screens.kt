@@ -95,7 +95,9 @@ import io.github.nideta231.hermesremote.data.SessionOrdering
 import io.github.nideta231.hermesremote.data.SessionStatus
 import io.github.nideta231.hermesremote.data.SessionSummary
 import io.github.nideta231.hermesremote.data.SessionView
+import io.github.nideta231.hermesremote.data.SESSION_PAGE
 import io.github.nideta231.hermesremote.data.arrangeSessions
+import io.github.nideta231.hermesremote.data.pageGroups
 import io.github.nideta231.hermesremote.data.Transport
 import io.github.nideta231.hermesremote.data.TransportMode
 import kotlinx.coroutines.launch
@@ -130,6 +132,8 @@ fun SessionsPane(
     modifier: Modifier = Modifier,
     pcs: List<PairedPc> = emptyList(),
     view: SessionView = SessionView(),
+    update: UpdateState? = null,
+    onOpenUpdate: () -> Unit = {},
 ) {
     var query by remember { mutableStateOf("") }
     var filterSheet by remember { mutableStateOf(false) }
@@ -145,6 +149,10 @@ fun SessionsPane(
     val grouped = remember(state.items, state.live, state.projects, view, query) {
         arrangeSessions(state.items, view, state.live, state.projects, query)
     }
+    // "Show more" per group: group key -> rows shown. Search, filters and paging are applied in that
+    // order (see pageGroups), and a new query, view or PC starts every group back at one page.
+    var shown by remember(query, view, pcs.firstOrNull { it.active }?.id) { mutableStateOf(mapOf<String, Int>()) }
+    val pages = remember(grouped, shown, currentId) { pageGroups(grouped, shown, currentId) }
 
     val haptics = LocalHapticFeedback.current
     Column(modifier.fillMaxHeight().statusBarsPadding().navigationBarsPadding()) {
@@ -177,6 +185,7 @@ fun SessionsPane(
             IconButton(onClick = actions.refresh) { Icon(Glyphs.Refresh, "Refresh", modifier = Modifier.size(20.dp)) }
         }
         if (pcSheet) PcSheet(pcs, actions, onDismiss = { pcSheet = false })
+        update?.let { DrawerUpdateRow(it, onOpenUpdate) }
         Button(onClick = actions.newChat, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
             Icon(Glyphs.Compose, null, modifier = Modifier.size(18.dp))
@@ -204,7 +213,8 @@ fun SessionsPane(
                         Text(err, color = Bad, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp))
                     }
                 }
-                grouped.forEach { group ->
+                pages.forEach { page ->
+                    val group = page.group
                     // A searched group is always open, so a match is never hidden behind a collapsed header.
                     val ck = collapseKey(group.key)
                     val closed = query.isBlank() && ck in collapsedKeys
@@ -213,10 +223,17 @@ fun SessionsPane(
                             collapsedKeys = ArrayList(if (ck in collapsedKeys) collapsedKeys - ck else collapsedKeys + ck)
                         }
                     }
-                    if (!closed) items(group.items, key = { it.id }) { s ->
-                        SessionRow(s, current = s.id == currentId, live = state.live[s.id],
-                            modifier = Modifier.animateItem(),
-                            onClick = { actions.open(s.id) }, onLongClick = { menuFor = s })
+                    if (!closed) {
+                        items(page.items, key = { it.id }) { s ->
+                            SessionRow(s, current = s.id == currentId, live = state.live[s.id],
+                                modifier = Modifier.animateItem(),
+                                onClick = { actions.open(s.id) }, onLongClick = { menuFor = s })
+                        }
+                        if (page.remaining > 0) item(key = "more-${group.key}") {
+                            ShowMoreRow(page.remaining, Modifier.animateItem()) {
+                                shown = shown + (group.key to page.items.size + SESSION_PAGE)
+                            }
+                        }
                     }
                 }
                 item {
@@ -379,6 +396,19 @@ private fun RadioMark(selected: Boolean) {
     }
 }
 
+/** "Show N more" under a long group; each tap adds [SESSION_PAGE] rows. */
+@Composable
+private fun ShowMoreRow(remaining: Int, modifier: Modifier, onClick: () -> Unit) {
+    Row(modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick)
+        .padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(Glyphs.Chevron, null, tint = Gold, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Show ${minOf(remaining, SESSION_PAGE)} more", style = MaterialTheme.typography.labelLarge, color = Gold,
+            fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        Text("$remaining left", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
 /** Tappable group header: label, count and a chevron that turns when the group is collapsed. */
 @Composable
 private fun GroupHeader(label: String, count: Int, collapsed: Boolean, modifier: Modifier, onToggle: () -> Unit) {
@@ -528,6 +558,8 @@ class SettingsActions(
     val useAuto: () -> Unit,
     val checkUpdate: () -> Unit,
     val installUpdate: () -> Unit,
+    val openUpdate: () -> Unit = {},
+    val openChangelog: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -546,7 +578,7 @@ fun SettingsScreen(
         PullToRefreshBox(isRefreshing = state.loading, onRefresh = actions.refresh, modifier = Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 4.dp)) {
-                UpdateBanner(update, actions.installUpdate)
+                UpdateBanner(update, actions.openUpdate)
                 SectionLabel("Connection")
                 ConnectionPanel(conn, state.error, actions)
                 SectionLabel("Your PC")
@@ -558,7 +590,7 @@ fun SettingsScreen(
                     PanelRow("App version", update.installed.ifBlank { "?" }, Glyphs.Download, onClick = actions.checkUpdate) {
                         when {
                             update.checking -> TypingDots()
-                            update.available != null -> Pill("Update", tint = Color.Black, container = Gold, onClick = actions.installUpdate)
+                            update.available != null -> Pill("Update", tint = Color.Black, container = Gold, onClick = actions.openUpdate)
                             update.checkedAt != null -> Text("Up to date", style = MaterialTheme.typography.labelMedium, color = Ok)
                             else -> Text("Check", style = MaterialTheme.typography.labelMedium, color = Gold)
                         }
@@ -566,6 +598,7 @@ fun SettingsScreen(
                     update.error?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, color = Bad, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                     }
+                    PanelRow("Changelog", "What changed in every version", Glyphs.Doc, onClick = actions.openChangelog)
                     pairing?.let { PanelRow("Paired as “${it.device}”", it.url, Glyphs.Qr) }
                     PanelRow("Unpair this device", icon = Glyphs.Close, iconTint = Bad, titleColor = Bad, onClick = { confirmUnpair = true })
                 }
@@ -581,8 +614,9 @@ fun SettingsScreen(
     }
 }
 
+/** Settings' update card; "What's new" opens the sheet with the notes and Update now. */
 @Composable
-private fun UpdateBanner(u: UpdateState, onInstall: () -> Unit) {
+private fun UpdateBanner(u: UpdateState, onOpen: () -> Unit) {
     val available = u.available
     AnimatedVisibility(available != null || u.progress != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
         Surface(color = Gold.copy(alpha = 0.14f), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
@@ -597,11 +631,9 @@ private fun UpdateBanner(u: UpdateState, onInstall: () -> Unit) {
                 if (progress != null) {
                     LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp).clip(CircleShape))
                 } else {
-                    available?.notes?.takeIf { it.isNotBlank() }?.let {
-                        // Full changelog since this version: scroll inside the card instead of cutting it off.
-                        Box(Modifier.padding(top = 6.dp).heightIn(max = 260.dp).verticalScroll(rememberScrollState())) { MarkdownText(it) }
-                    }
-                    Button(onClick = onInstall, modifier = Modifier.padding(top = 10.dp)) { Text("Update now") }
+                    Text("You have ${u.installed}. See what changed since then before updating.", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                    Button(onClick = onOpen, modifier = Modifier.padding(top = 10.dp)) { Text("What's new · Update") }
                 }
             }
         }

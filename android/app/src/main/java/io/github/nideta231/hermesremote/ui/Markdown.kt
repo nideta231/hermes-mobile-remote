@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,7 +38,8 @@ import androidx.compose.ui.unit.sp
 /** One rendered block of an assistant message. */
 sealed interface MdBlock {
     data class Text(val body: String) : MdBlock
-    data class Code(val body: String) : MdBlock
+    /** [lang] is the fence's info string ("kotlin" in ```kotlin), blank when none. */
+    data class Code(val body: String, val lang: String = "") : MdBlock
     data class Table(val header: List<String>, val align: List<CellAlign>, val rows: List<List<String>>) : MdBlock
 }
 
@@ -48,7 +51,13 @@ private val separatorCell = Regex("""^\s*:?-{1,}:?\s*$""")
 fun parseMarkdown(text: String): List<MdBlock> {
     val out = mutableListOf<MdBlock>()
     text.split("```").forEachIndexed { i, part ->
-        if (i % 2 == 1) out += MdBlock.Code(part.substringAfter('\n', part).trimEnd('\n'))
+        if (i % 2 == 1) {
+            // "```kotlin\ncode": the first line is the language. Text right after the fence on a
+            // one-line block ("```code```") has no newline and is code, not a language.
+            val hasInfo = '\n' in part
+            val lang = if (hasInfo) part.substringBefore('\n').trim().takeIf { ' ' !in it }.orEmpty() else ""
+            out += MdBlock.Code(part.substringAfter('\n', part).trimEnd('\n'), lang)
+        }
         else splitTables(part, out)
     }
     return out
@@ -135,19 +144,7 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
         Column {
             blocks.forEach { block ->
                 when (block) {
-                    is MdBlock.Code -> Text(
-                        block.body,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.5.sp,
-                        lineHeight = 17.sp,
-                        softWrap = false,
-                        modifier = Modifier
-                            .padding(vertical = 4.dp)
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceContainerHighest, RoundedCornerShape(8.dp))
-                            .horizontalScroll(rememberScrollState())
-                            .padding(10.dp),
-                    )
+                    is MdBlock.Code -> CodeBlock(block)
                     is MdBlock.Table -> MarkdownTable(block)
                     is MdBlock.Text -> if (block.body.isNotBlank()) {
                         Text(inline(block.body), style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp))
@@ -155,6 +152,28 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
+}
+
+/** A fenced code block with its language and a copy button on top, like GitHub and the desktop app. */
+@Composable
+private fun CodeBlock(block: MdBlock.Code) {
+    val shape = RoundedCornerShape(8.dp)
+    Column(Modifier.padding(vertical = 4.dp).fillMaxWidth().clip(shape).background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
+        Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 2.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(block.lang.ifBlank { "code" }, style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            // Outside the selection: copying the code must not pull the button's label along.
+            DisableSelection { CopyButton(block.body, size = 13.dp) }
+        }
+        Text(
+            block.body,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.5.sp,
+            lineHeight = 17.sp,
+            softWrap = false,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
+        )
     }
 }
 

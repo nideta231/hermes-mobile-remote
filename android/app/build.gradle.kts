@@ -73,6 +73,16 @@ android {
     }
 }
 
+// CHANGELOG.md ships inside the APK: the app shows it offline ("Changelog" in Settings) and, after an
+// update, the part between the old and the new version.
+val changelogAssets = layout.buildDirectory.dir("generated/changelogAssets")
+val copyChangelog by tasks.registering(Copy::class) {
+    from(rootProject.file("../CHANGELOG.md"))
+    into(changelogAssets)
+}
+android.sourceSets["main"].assets.srcDir(changelogAssets)
+tasks.named("preBuild") { dependsOn(copyChangelog) }
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

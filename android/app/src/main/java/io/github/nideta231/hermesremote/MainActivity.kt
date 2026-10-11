@@ -59,6 +59,12 @@ import io.github.nideta231.hermesremote.ui.HermesTheme
 import io.github.nideta231.hermesremote.ui.PairScreen
 import io.github.nideta231.hermesremote.ui.SessionActions
 import io.github.nideta231.hermesremote.ui.SessionsPane
+import io.github.nideta231.hermesremote.ui.UpdateSheet
+import io.github.nideta231.hermesremote.ui.NotesSheet
+import io.github.nideta231.hermesremote.data.fullChangelog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.fillMaxWidth
 import io.github.nideta231.hermesremote.ui.SettingsActions
 import io.github.nideta231.hermesremote.ui.SettingsScreen
 import io.github.nideta231.hermesremote.ui.linkHealth
@@ -182,6 +188,8 @@ class MainActivity : ComponentActivity() {
         val update by vm.update.collectAsState()
         val toast by vm.toast.collectAsState()
         val pcs by vm.pcs.collectAsState()
+        var updateSheet by rememberSaveable { mutableStateOf(false) }
+        var changelogSheet by rememberSaveable { mutableStateOf(false) }
 
         var page by rememberSaveable { mutableStateOf(Page.CHAT) }
         val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -230,7 +238,9 @@ class MainActivity : ComponentActivity() {
             refresh = vm::refreshStatus, unpair = vm::unpair, setApprovalMode = vm::setApprovalMode,
             useTransport = vm::useTransport, useAuto = vm::useAutoTransport,
             checkUpdate = { vm.checkForUpdate() }, installUpdate = vm::installUpdate,
+            openUpdate = { updateSheet = true }, openChangelog = { changelogSheet = true },
         )
+        val openUpdate = { scope.launch { drawer.close() }; updateSheet = true }
 
         val content: @Composable () -> Unit = {
             Box(Modifier.fillMaxSize()) {
@@ -242,18 +252,27 @@ class MainActivity : ComponentActivity() {
                 }, label = "page") { p ->
                     when (p) {
                         Page.CHAT -> ChatScreen(chat, health, models, vm.shownModel(models, chat), reasoning, suggestions,
-                            openModelPicker, confirm, showMenuButton = !wide, actions = chatActions)
+                            openModelPicker, confirm, showMenuButton = !wide, actions = chatActions,
+                            update = update, onOpenUpdate = openUpdate, onDismissUpdate = vm::dismissUpdateBanner)
                         Page.SETTINGS -> SettingsScreen(system, pairing, conn, update, settingsActions, onBack = { page = Page.CHAT })
                     }
                 }
                 SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 72.dp))
+            }
+            if (updateSheet && update.available != null) UpdateSheet(update, onInstall = vm::installUpdate, onDismiss = { updateSheet = false })
+            if (changelogSheet) NotesSheet("Changelog", "You have ${update.installed}", remember { fullChangelog(vm.changelog) },
+                onDismiss = { changelogSheet = false })
+            update.whatsNew?.let { notes ->
+                NotesSheet("What's new in ${update.installed}", "Updated. Here is what changed:", notes, onDismiss = vm::markWhatsNewSeen) {
+                    Button(onClick = vm::markWhatsNewSeen, modifier = Modifier.fillMaxWidth()) { Text("Got it") }
+                }
             }
         }
 
         if (wide) {
             Row(Modifier.fillMaxSize()) {
                 Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.width(320.dp).fillMaxHeight()) {
-                    SessionsPane(sessions, chat.sessionId, sessionActions, pcs = pcs, view = sessionView)
+                    SessionsPane(sessions, chat.sessionId, sessionActions, pcs = pcs, view = sessionView, update = update, onOpenUpdate = openUpdate)
                 }
                 VerticalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                 Box(Modifier.weight(1f)) { content() }
@@ -261,7 +280,7 @@ class MainActivity : ComponentActivity() {
         } else {
             ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = page == Page.CHAT || drawer.isOpen, drawerContent = {
                 ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.width(320.dp)) {
-                    SessionsPane(sessions, chat.sessionId, sessionActions, pcs = pcs, view = sessionView)
+                    SessionsPane(sessions, chat.sessionId, sessionActions, pcs = pcs, view = sessionView, update = update, onOpenUpdate = openUpdate)
                 }
             }) { content() }
         }

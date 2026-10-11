@@ -1,5 +1,6 @@
 package io.github.nideta231.hermesremote.ui
 
+import io.github.nideta231.hermesremote.UpdateState
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -36,6 +37,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -153,6 +155,9 @@ fun ChatScreen(
     confirm: ModelConfirm?,
     showMenuButton: Boolean,
     actions: ChatActions,
+    update: UpdateState? = null,
+    onOpenUpdate: () -> Unit = {},
+    onDismissUpdate: () -> Unit = {},
 ) {
     var modelSheet by remember { mutableStateOf(false) }
     var reasoningSheet by remember { mutableStateOf(false) }
@@ -166,6 +171,7 @@ fun ChatScreen(
     Column(Modifier.fillMaxSize().imePadding()) {
         ChatTopBar(state, health, showMenuButton, actions)
         ConnectionBanner(state, health, actions.openSettings)
+        update?.let { UpdateStrip(it, onOpenUpdate, onDismissUpdate) }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             AnimatedContent(
                 targetState = when {
@@ -451,6 +457,8 @@ private fun AssistantBlock(item: ChatItem.Assistant) {
     val caretOn by animateFloatAsState(if (item.streaming) 1f else 0f, tween(250), label = "caret")
     Column(Modifier.fillMaxWidth().padding(end = 8.dp)) {
         MarkdownText(if (caretOn > 0.01f) "$shown ▍" else shown)
+        // Copy the whole reply as markdown, like the desktop's copy action under each answer.
+        if (!item.streaming && item.text.isNotBlank()) CopyButton(item.text, Modifier.offset(x = (-6).dp))
     }
 }
 
