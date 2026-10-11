@@ -146,6 +146,30 @@ class LogicTest {
         assertTrue((items[3] as ChatItem.Assistant).streaming)
     }
 
+    @Test fun desktopTurnShowsItsUserMessageLive() {
+        val live: (List<ChatItem>, String?, JSONObject?) -> List<ChatItem> = { i, a, f -> io.github.nideta231.hermesremote.data.withLiveUser(i, a, f) }
+        val history = listOf<ChatItem>(ChatItem.User("h1", "earlier"), ChatItem.Assistant("h2", "ok"))
+        // Typed on the desktop: the reply already started streaming before the fetch came back.
+        val streaming = history + ChatItem.Assistant("7", "Sure", streaming = true)
+        val items = live(streaming, "h2", JSONObject("""{"user":"from pc","assistant":"","streaming":true}"""))
+        assertEquals(listOf("h1", "h2", "live-u-h2", "7"), items.map { it.key })
+        assertEquals("from pc", (items[2] as ChatItem.User).text)
+        // A second delivery of the same turn adds nothing.
+        assertEquals(items, live(items, "h2", JSONObject("""{"user":"from pc"}""")))
+        // The phone's own send is already shown (newest user row, no reply yet).
+        val own = history + ChatItem.User("u-1", "from phone")
+        assertEquals(own, live(own, "u-1", JSONObject("""{"user":"from phone"}""")))
+        // ...and still after its reply started streaming before the fetch returned.
+        val ownReplying = own + ChatItem.Assistant("8", "On it", streaming = true)
+        assertEquals(ownReplying, live(ownReplying, "u-1", JSONObject("""{"user":"from phone"}""")))
+        // List rebuilt meanwhile (anchor gone): untouched.
+        assertEquals(history, live(history, "gone", JSONObject("""{"user":"x"}""")))
+        // First turn of an empty chat goes on top.
+        assertEquals("live-u-start", live(emptyList(), null, JSONObject("""{"user":"hi"}""")).single().key)
+        // No in-flight turn (already over): untouched.
+        assertEquals(history, live(history, "h2", null))
+    }
+
     @Test fun catalogParsesAndDropsUnavailableProviders() {
         // model.options as hermes serve returns it.
         val raw = JSONObject("""

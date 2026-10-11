@@ -3,6 +3,12 @@
 Releases are git tags; the version in the app comes from the tag. `git log v0.9.0..vX.Y.Z` is the
 authoritative history — this file only summarises what is worth knowing before upgrading.
 
+## v1.6.0
+
+- Messages you type on the PC now appear on the phone as soon as the turn starts, not only the
+  reply. Before, the phone showed the PC's message only after reopening the chat.
+- Your own messages from the phone still show once (no duplicate bubble).
+
 ## v1.5.0
 
 - Long chat groups show 15 chats, then a "Show 15 more · N left" row. Search and the drawer

@@ -55,6 +55,7 @@ import io.github.nideta231.hermesremote.data.reuseKeys
 import io.github.nideta231.hermesremote.data.str
 import io.github.nideta231.hermesremote.data.strings
 import io.github.nideta231.hermesremote.data.withInflight
+import io.github.nideta231.hermesremote.data.withLiveUser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -718,7 +719,10 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             for (ev in batch) {
                 val key = "${ev.seq ?: System.nanoTime()}"
                 when (ev.type) {
-                    "message.start" -> status = "working"
+                    "message.start" -> {
+                        status = "working"
+                        fetchLiveUser(st.runtimeId, items.lastOrNull()?.key)
+                    }
                     "message.complete" -> { status = "idle"; finished = true }
                     "request.cancel" -> {
                         val id = ev.payload.str("id")
@@ -747,6 +751,26 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         }
         _reasoning.value = _chat.value.reasoning ?: _reasoning.value
         if (finished) { scheduleSessionsRefresh(); viewModelScope.launch { refreshActive() } }
+    }
+
+    /**
+     * `message.start` has no text, so a turn typed on the desktop showed only its reply here. Read
+     * the turn's user message from the session (`inflight`, transcript skipped) and put it in place;
+     * the phone's own sends are already shown and are left alone (see [withLiveUser]).
+     */
+    private fun fetchLiveUser(rid: String?, anchorKey: String?) {
+        val g = gateway ?: return
+        rid ?: return
+        viewModelScope.launch {
+            val inflight = try {
+                g.call("session.activate", JSONObject().put("session_id", rid).put("omit_messages", true), 15_000)
+                    .optJSONObject("inflight")
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                null // older Hermes: the turn-end refresh still shows it
+            } ?: return@launch
+            _chat.update { if (it.runtimeId != rid) it else it.copy(items = withLiveUser(it.items, anchorKey, inflight)) }
+        }
     }
 
     private fun scheduleSessionsRefresh() {

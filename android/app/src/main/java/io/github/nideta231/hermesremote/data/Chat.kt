@@ -318,6 +318,39 @@ fun withInflight(history: List<ChatItem>, inflight: JSONObject?): List<ChatItem>
 }
 
 /**
+ * A turn another screen (the desktop) started while this chat is open: Hermes' `message.start`
+ * carries no text, so the user's message comes from the session's `inflight` snapshot and goes
+ * right after [anchorKey], the last item before the turn began (null = the list was empty).
+ * Nothing changes if the anchor is gone, or the message is already shown: the phone's own send
+ * (its bubble is the newest user row, still unanswered) or a rebuilt list that has it after the
+ * anchor.
+ */
+fun withLiveUser(items: List<ChatItem>, anchorKey: String?, inflight: JSONObject?): List<ChatItem> {
+    inflight ?: return items
+    val key = "live-u-${anchorKey ?: "start"}"
+    if (items.any { it.key == key }) return items
+    val at = if (anchorKey == null) 0 else items.indexOfFirst { it.key == anchorKey }.takeIf { it >= 0 }?.plus(1) ?: return items
+    val raw = inflight.str("user").orEmpty()
+    val row = when (val s = syntheticUserRow(raw, inflight.str("display_kind"), inflight.opt("display_metadata"))) {
+        SyntheticRow.Drop -> return items
+        is SyntheticRow.Notice -> {
+            if (items.drop(at).any { it is ChatItem.Notice && it.text == s.text }) return items
+            ChatItem.Notice(key, s.text)
+        }
+        null -> {
+            val text = displayUserText(raw).trim().takeIf { it.isNotEmpty() } ?: return items
+            // From the anchor on: the anchor itself is the phone's own bubble when it sent this turn.
+            if (items.drop(maxOf(at - 1, 0)).any { it is ChatItem.User && it.text.trim() == text }) return items
+            val lastUser = items.indexOfLast { it is ChatItem.User }
+            if (lastUser >= 0 && (items[lastUser] as ChatItem.User).text.trim() == text &&
+                items.drop(lastUser + 1).none { it is ChatItem.Assistant }) return items
+            ChatItem.User(key, text)
+        }
+    }
+    return items.toMutableList().apply { add(at, row) }
+}
+
+/**
  * A rebuilt list (resume after a reconnect, turn end) replaces the live one. Keep each item's key
  * from the item it replaces, otherwise the list sees every message as removed + new and
  * re-animates it (the visible flash).
