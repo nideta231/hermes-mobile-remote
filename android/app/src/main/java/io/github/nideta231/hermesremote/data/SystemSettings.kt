@@ -25,12 +25,13 @@ data class SystemState(
 
 /**
  * Settings > PC: the bridge's component health, and the Hermes profile's approval mode and default
- * model. Answers that arrive after the user moved to another profile are dropped.
+ * model. Answers that arrive after the user moved to another PC or profile are dropped.
  */
 class SystemSettings(
     private val scope: CoroutineScope,
     private val client: () -> BridgeClient?,
-    private val profile: () -> String,
+    /** The PC and Hermes profile in use now. */
+    private val target: () -> Target,
     private val describe: (Throwable) -> String,
     private val say: (String) -> Unit,
     /** Hermes accepted [ModelOption] as the default: the model picker marks it. */
@@ -42,14 +43,14 @@ class SystemSettings(
 
     fun refresh() {
         val c = client() ?: return
-        val asked = profile()
+        val asked = target()
         _system.update { it.copy(loading = true) }
         scope.launch {
             try {
                 val comps = c.status()
-                val mode = runCatching { c.approvalMode(asked) }.getOrNull()
-                val def = runCatching { c.defaultModel(asked) }.getOrNull()
-                if (asked != profile()) return@launch
+                val mode = runCatching { c.approvalMode(asked.profile) }.getOrNull()
+                val def = runCatching { c.defaultModel(asked.profile) }.getOrNull()
+                if (asked != target()) return@launch
                 _system.update {
                     it.copy(components = comps, loading = false, error = null, checkedAt = System.currentTimeMillis(),
                         approvalMode = mode ?: it.approvalMode,
@@ -57,6 +58,7 @@ class SystemSettings(
                 }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
+                if (asked != target()) return@launch
                 _system.update { it.copy(loading = false, error = describe(t), checkedAt = System.currentTimeMillis()) }
             }
         }
@@ -66,10 +68,11 @@ class SystemSettings(
         val c = client() ?: return
         if (_system.value.approvalMode == mode || _system.value.approvalSaving) return
         _system.update { it.copy(approvalSaving = true) }
+        val asked = target()
         scope.launch {
             try {
-                val applied = c.setApprovalMode(mode, profile())
-                _system.update { it.copy(approvalMode = applied, approvalSaving = false) }
+                val applied = c.setApprovalMode(mode, asked.profile)
+                _system.update { if (asked == target()) it.copy(approvalMode = applied, approvalSaving = false) else it.copy(approvalSaving = false) }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 _system.update { it.copy(approvalSaving = false) }
@@ -83,9 +86,11 @@ class SystemSettings(
         val c = client() ?: return
         if (_system.value.defaultSaving) return
         _system.update { it.copy(defaultSaving = true, defaultConfirm = null) }
+        val asked = target()
         scope.launch {
             try {
-                val res = c.setDefaultModel(option.id, option.provider, confirmed, profile())
+                val res = c.setDefaultModel(option.id, option.provider, confirmed, asked.profile)
+                if (asked != target()) { _system.update { it.copy(defaultSaving = false) }; return@launch }
                 if (res.optBoolean("confirm_required")) {
                     val msg = res.optString("confirm_message").ifBlank { "This model is expensive. Make it the default anyway?" }
                     _system.update { it.copy(defaultSaving = false, defaultConfirm = ModelConfirm(option, msg)) }

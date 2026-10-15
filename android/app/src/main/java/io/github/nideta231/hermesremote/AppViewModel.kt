@@ -13,6 +13,7 @@ import io.github.nideta231.hermesremote.data.BridgeClient
 import io.github.nideta231.hermesremote.data.BridgeException
 import io.github.nideta231.hermesremote.data.ProjectRef
 import io.github.nideta231.hermesremote.data.SessionView
+import io.github.nideta231.hermesremote.data.Target
 import io.github.nideta231.hermesremote.data.SessionViewStore
 import io.github.nideta231.hermesremote.data.ChatItem
 import io.github.nideta231.hermesremote.data.ComponentStatus
@@ -228,14 +229,14 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     val toast: StateFlow<String?> = _toast.asStateFlow()
 
     /** The Scheduled page: cron jobs of the profile in use. */
-    val cron = CronJobs(viewModelScope, client = { client }, profile = { profile },
+    val cron = CronJobs(viewModelScope, client = { client }, target = ::target,
         describe = ::describe, say = { _toast.value = it })
     /** The Vault page: saved logins, cards and addresses on the PC (metadata; secrets stay there). */
     val vault = io.github.nideta231.hermesremote.data.Vault(viewModelScope,
         call = { method, params -> (gateway ?: throw IOException("Not connected to your PC")).call(method, scoped(params), 30_000) },
-        describe = ::describe, say = { _toast.value = it })
+        target = ::target, describe = ::describe, say = { _toast.value = it })
     /** Settings > PC: the bridge's health, and the profile's approval mode and default model. */
-    val settings = SystemSettings(viewModelScope, client = { client }, profile = { profile },
+    val settings = SystemSettings(viewModelScope, client = { client }, target = ::target,
         describe = ::describe, say = { _toast.value = it },
         onDefaultModel = { option -> _models.update { cat -> cat?.copy(options = cat.options.map { o ->
             o.copy(current = o.id == option.id && o.provider == option.provider) }) } })
@@ -474,6 +475,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                         if (_pairing.value?.url != ep.url) _pairing.update { it?.copy(url = ep.url) }
                         store.save(clientPairing())
                         useClient(BridgeClient(candidate))
+                        refreshProfiles()
                         refreshSessions()
                         settings.refresh()
                         discoverEndpoints()
@@ -823,10 +825,10 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     private fun refreshSessionsHead() {
         val c = client ?: return
         if (_sessions.value.items.isEmpty()) return refreshSessions(quiet = true)
-        val asked = profile
+        val asked = target()
         viewModelScope.launch {
             try {
-                val (page, _) = c.sessions(SESSIONS_PER_REQUEST, 0, asked)
+                val (page, _) = c.sessions(SESSIONS_PER_REQUEST, 0, asked.profile)
                 if (!stillOn(asked)) return@launch
                 val merged = mergeSessionHead(_sessions.value.items, page)
                 if (merged != _sessions.value.items) _sessions.update { it.copy(items = merged, error = null) }
@@ -948,9 +950,14 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------ Hermes profiles
 
-    /** Which profiles the PC has. A bridge too old to list them leaves the app on the default profile. */
+    /**
+     * Which profiles the PC has. A bridge too old to list them leaves the app on the default profile.
+     * The list belongs to the PC it was asked of: one that arrives after a switch to another PC is
+     * dropped, so neither PC's dropdown shows (or loses) the other's profiles.
+     */
     fun refreshProfiles() {
         val c = client ?: return
+        val pc = profiles.activeId
         viewModelScope.launch {
             val items = try {
                 c.profiles()
@@ -959,6 +966,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                 if (t !is BridgeException || t.httpCode != 404) return@launch  // offline: keep what we have
                 emptyList()
             }
+            if (profiles.activeId != pc) return@launch
             _hermesProfiles.update { it.copy(items = items) }
             // The chosen profile was deleted (or this bridge can't scope requests): fall back to the default.
             if (profile != DEFAULT_HERMES_PROFILE && items.none { it.name == profile }) switchProfile(DEFAULT_HERMES_PROFILE)
@@ -984,14 +992,17 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         settings.refresh()
     }
 
-    /** False once the user moved to another profile while a request for [asked] was in flight. */
-    private fun stillOn(asked: String) = profile == asked
+    /** The paired PC and the Hermes profile on it that requests are for right now. */
+    private fun target() = Target(profiles.activeId, profile)
+
+    /** False once the user moved to another PC or profile while a request for [asked] was in flight. */
+    private fun stillOn(asked: Target) = target() == asked
 
     // ------------------------------------------------------------ sessions
 
     fun refreshSessions(quiet: Boolean = false) {
         val c = client ?: return
-        val asked = profile
+        val asked = target()
         if (!quiet) _sessions.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
             try {
@@ -1000,7 +1011,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                 val list = ArrayList<SessionSummary>()
                 var more = true
                 while (more && list.size < MAX_SESSIONS) {
-                    val (page, next) = c.sessions(SESSIONS_PER_REQUEST, list.size, asked)
+                    val (page, next) = c.sessions(SESSIONS_PER_REQUEST, list.size, asked.profile)
                     list += page
                     more = next && page.isNotEmpty()
                 }
@@ -1020,7 +1031,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     private suspend fun refreshProjects() {
         val g = gateway ?: return
         if (g.state.value != GatewayState.OPEN) return
-        val asked = profile
+        val asked = target()
         val tree = runCatching { g.call("projects.tree", scoped(JSONObject()), 15_000) }.getOrNull() ?: return
         if (!stillOn(asked)) return
         val projects = tree.optJSONArray("projects").objects().mapNotNull { p ->
@@ -1040,10 +1051,10 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         val cur = _sessions.value
         if (cur.loading || !cur.hasMore) return
         _sessions.update { it.copy(loading = true) }
-        val asked = profile
+        val asked = target()
         viewModelScope.launch {
             try {
-                val (list, more) = c.sessions(SESSIONS_PER_REQUEST, cur.items.size, asked)
+                val (list, more) = c.sessions(SESSIONS_PER_REQUEST, cur.items.size, asked.profile)
                 if (!stillOn(asked)) return@launch
                 _sessions.update { s -> s.copy(items = (s.items + list).distinctBy { it.id }, loading = false, hasMore = more) }
             } catch (t: Throwable) {

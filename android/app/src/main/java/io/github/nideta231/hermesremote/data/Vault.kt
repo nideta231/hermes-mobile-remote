@@ -87,6 +87,8 @@ fun vaultAddParams(d: VaultDraft): JSONObject = JSONObject().put("kind", d.kind)
 class Vault(
     private val scope: CoroutineScope,
     private val call: suspend (String, JSONObject) -> JSONObject,
+    /** The PC and Hermes profile in use now: a list that arrives after a switch is dropped. */
+    private val target: () -> Target,
     private val describe: (Throwable) -> String,
     private val say: (String) -> Unit,
 ) {
@@ -97,13 +99,15 @@ class Vault(
 
     fun refresh() {
         _state.update { it.copy(loading = true, error = null) }
+        val asked = target()
         scope.launch {
             try {
                 val items = parseVaultItems(call("vault.list", JSONObject()))
                 val sources = runCatching { parseVaultSources(call("vault.sources", JSONObject())) }.getOrDefault(emptyList())
-                _state.update { it.copy(items = items, sources = sources, loading = false, unsupported = false) }
+                if (asked == target()) _state.update { it.copy(items = items, sources = sources, loading = false, unsupported = false) }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
+                if (asked != target()) return@launch
                 val old = t is RpcException && t.code == -32601
                 _state.update { it.copy(loading = false, unsupported = old, error = if (old) null else describe(t)) }
             }

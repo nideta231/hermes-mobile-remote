@@ -3,6 +3,13 @@
 Releases are git tags; the version in the app comes from the tag. `git log v0.9.0..vX.Y.Z` is the
 authoritative history — this file only summarises what is worth knowing before upgrading.
 
+## Unreleased
+
+- Switching between paired PCs no longer loses the profile dropdown. A reply from the PC you just
+  left (its profile list, chats, scheduled jobs, settings or vault) could land on the one you
+  switched to and replace its data; every reply is now checked against the PC and profile it was
+  asked for.
+
 ## v1.13.1
 
 - Composer: Shift+Enter on a hardware keyboard inserts a newline at the cursor (replacing any

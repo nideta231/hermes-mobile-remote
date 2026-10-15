@@ -24,13 +24,14 @@ data class CronState(
  * The Scheduled page: the cron jobs of the Hermes profile in use, their recent runs, and pause /
  * resume / run now. Kept out of the ViewModel; it only needs the current client and profile.
  *
- * Every answer is checked against the profile it was asked for, so switching profiles while a
- * request is in flight never shows one profile's jobs under another's name.
+ * Every answer is checked against the PC and profile it was asked for, so switching either while a
+ * request is in flight never shows one's jobs under another's name.
  */
 class CronJobs(
     private val scope: CoroutineScope,
     private val client: () -> BridgeClient?,
-    private val profile: () -> String,
+    /** The PC and Hermes profile in use now. */
+    private val target: () -> Target,
     private val describe: (Throwable) -> String,
     private val say: (String) -> Unit,
 ) {
@@ -42,15 +43,15 @@ class CronJobs(
 
     fun refresh() {
         val c = client() ?: return
-        val asked = profile()
+        val asked = target()
         _state.update { it.copy(loading = true, error = null) }
         scope.launch {
             try {
-                val jobs = c.cronJobs(asked)
-                if (asked == profile()) _state.update { it.copy(jobs = jobs, loading = false, unsupported = false) }
+                val jobs = c.cronJobs(asked.profile)
+                if (asked == target()) _state.update { it.copy(jobs = jobs, loading = false, unsupported = false) }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
-                if (asked != profile()) return@launch
+                if (asked != target()) return@launch
                 val old = t is BridgeException && t.httpCode == 404 && t.code != "job_not_found"
                 _state.update { it.copy(loading = false, unsupported = old, error = if (old) null else describe(t)) }
             }
@@ -59,14 +60,14 @@ class CronJobs(
 
     fun loadRuns(jobId: String) {
         val c = client() ?: return
-        val asked = profile()
+        val asked = target()
         scope.launch {
             try {
-                val runs = c.cronRuns(jobId, asked)
-                if (asked == profile()) _state.update { it.copy(runs = it.runs + (jobId to runs)) }
+                val runs = c.cronRuns(jobId, asked.profile)
+                if (asked == target()) _state.update { it.copy(runs = it.runs + (jobId to runs)) }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
-                if (asked == profile()) say(describe(t))
+                if (asked == target()) say(describe(t))
             }
         }
     }
@@ -74,13 +75,13 @@ class CronJobs(
     /** Create a job; [onDone] gets null on success or the error to show in the form. */
     fun create(name: String, schedule: String, prompt: String, onDone: (String?) -> Unit) {
         val c = client() ?: return onDone("Not connected to your PC")
-        val asked = profile()
+        val asked = target()
         scope.launch {
             try {
-                c.createCronJob(name.trim(), schedule.trim(), prompt.trim(), asked)
+                c.createCronJob(name.trim(), schedule.trim(), prompt.trim(), asked.profile)
                 onDone(null)
                 say("Scheduled ${name.trim().ifEmpty { "job" }}")
-                if (asked == profile()) refresh()
+                if (asked == target()) refresh()
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 onDone(describe(t))
@@ -95,12 +96,12 @@ class CronJobs(
     private fun act(job: CronJob, action: String, done: String) {
         val c = client() ?: return
         if (job.id in _state.value.busy) return
-        val asked = profile()
+        val asked = target()
         _state.update { it.copy(busy = it.busy + job.id) }
         scope.launch {
             try {
-                val updated = c.cronAction(job.id, action, asked)
-                if (asked != profile()) return@launch
+                val updated = c.cronAction(job.id, action, asked.profile)
+                if (asked != target()) return@launch
                 _state.update { st ->
                     st.copy(jobs = st.jobs.map { if (it.id == job.id && updated != null) updated else it },
                         runs = st.runs - job.id)  // a run may have been added; re-read when opened
@@ -109,7 +110,7 @@ class CronJobs(
                 if (action == "trigger") refresh()
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
-                if (asked == profile()) say(describe(t))
+                if (asked == target()) say(describe(t))
             } finally {
                 _state.update { it.copy(busy = it.busy - job.id) }
             }
