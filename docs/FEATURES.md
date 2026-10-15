@@ -14,6 +14,11 @@ desktop streams on the phone token by token, and the other way round. There is n
 before the first word and the model's reasoning in a collapsible block. Tool calls render as cards
 with their arguments, result and duration; a running card shimmers, a failed one is marked red.
 
+**Subagents.** When the agent hands work to subagents (`delegate_task`), a card under the chat
+lists them: each one's task, the tool it is using, its tool count, model and running time. Ones
+that finish turn green (tap for their answer) or red. *Stop* ends one subagent and leaves the chat
+running. Opening a chat while subagents run shows them straight away.
+
 **Steering and stopping.** While a turn is in flight the composer becomes "Steer the running
 task…", and the send button turns into a stop button. You can add instructions mid-turn or cancel.
 

@@ -171,6 +171,8 @@ class ChatActions(
     val answerSecret: (String, String) -> Unit = { _, _ -> },
     /** Edit a sent message: Hermes drops it and what followed, then answers the new text. */
     val edit: (ChatItem.User, String) -> Unit = { _, _ -> },
+    /** Stop one child agent of the open chat. */
+    val stopSubagent: (String) -> Unit = {},
 )
 
 /** The long-press menu of a sent message; provided by [ChatScreen]. */
@@ -238,7 +240,7 @@ fun ChatScreen(
                 when (body) {
                     0 -> LoadingChat()
                     1 -> EmptyChat(onPick = { actions.draft(it) })
-                    else -> MessageList(state)
+                    else -> MessageList(state, actions.stopSubagent)
                 }
             }
         }
@@ -421,7 +423,7 @@ private fun EmptyChat(onPick: (String) -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageList(state: ChatState) {
+private fun MessageList(state: ChatState, stopSubagent: (String) -> Unit) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var follow by remember { mutableStateOf(true) }
@@ -436,11 +438,11 @@ private fun MessageList(state: ChatState) {
     val seen = remember(state.sessionId) { HashSet<String>(state.items.map { it.key }) }
     val lastText = (state.items.lastOrNull() as? ChatItem.Assistant)?.text?.length ?: 0
     val viewport by remember { derivedStateOf { listState.layoutInfo.viewportSize.height } }
-    LaunchedEffect(state.items.size, lastText, viewport, state.busy) {
+    LaunchedEffect(state.items.size, lastText, viewport, state.busy, state.subagents.size) {
         if (follow && state.items.isNotEmpty()) listState.scrollToItem(listState.layoutInfo.totalItemsCount.coerceAtLeast(1) - 1, Int.MAX_VALUE / 2)
     }
     val last = state.items.lastOrNull()
-    val thinking = state.busy && !state.waiting &&
+    val thinking = state.busy && !state.waiting && state.subagents.none { it.running } &&
         !(last is ChatItem.Assistant && last.streaming) && !(last is ChatItem.Thinking && last.streaming) &&
         !(last is ChatItem.Tool && last.status == ToolStatus.RUNNING)
 
@@ -461,6 +463,11 @@ private fun MessageList(state: ChatState) {
                         is ChatItem.Notice -> NoticeLine(item)
                         is ChatItem.CommandOutput -> CommandOutputCard(item)
                     }
+                }
+            }
+            if (state.subagents.isNotEmpty()) item(key = "subagents") {
+                Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null).entrance("subagents", seen)) {
+                    SubagentPanel(state.subagents, stopSubagent)
                 }
             }
             if (thinking) item(key = "typing") {

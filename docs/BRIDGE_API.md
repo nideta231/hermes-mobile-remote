@@ -136,6 +136,11 @@ same one the desktop app uses. The bridge adds only:
    another screen is withdrawn with a `request.cancel` event.
 6. **Sidebar:** `session.active_list` gives what is working right now; `sessions.changed` events say
    when to re-fetch `/v1/sessions`.
+7. **Subagents:** `subagent.list {session_id}` returns the chat's live children (`subagents[]`:
+   `subagent_id, goal, model, status, tool_count, last_tool, depth, started_at`) and recently failed
+   background delegations. `subagent.interrupt {session_id, subagent_id}` stops one (`{found}`); the
+   chat's own turn goes on. Hermes answers both only for sessions this socket is attached to.
+   Steering a child (`subagent.steer`) and reading its transcript (`subagent.tail`) stay on the PC.
 
 ### Events the app renders
 
@@ -150,6 +155,7 @@ same one the desktop app uses. The bridge adds only:
 | `message.complete` | `text, status` (`complete`, `interrupted`, `error`), `error?`, `warning?`. |
 | `session.title` / `session.info` | Title and model changes. |
 | `btw.complete` / `background.complete` | Side answers from `/btw` and `/background`. |
+| `subagent.spawn_requested` / `.start` / `.tool` / `.progress` / `.thinking` / `.complete` | A child agent (`delegate_task`): `subagent_id, goal, model, depth, tool_count`; `.tool` adds `tool_name`; `.complete` adds `status, summary, duration_seconds`. Delegations run in the background: `.complete` usually arrives after the turn's `message.complete`, and Hermes then starts a turn of its own to report the result. |
 | `request.cancel` | `id, reason`: an open question was answered elsewhere or withdrawn. |
 | `sessions.changed` | The session list changed. Global (`session_id` is empty). |
 

@@ -13,6 +13,8 @@ import io.github.nideta231.hermesremote.data.BridgeClient
 import io.github.nideta231.hermesremote.data.BridgeException
 import io.github.nideta231.hermesremote.data.ProjectRef
 import io.github.nideta231.hermesremote.data.SessionView
+import io.github.nideta231.hermesremote.data.Subagent
+import io.github.nideta231.hermesremote.data.SubagentReducer
 import io.github.nideta231.hermesremote.data.SessionViewStore
 import io.github.nideta231.hermesremote.data.ChatItem
 import io.github.nideta231.hermesremote.data.ComponentStatus
@@ -102,6 +104,8 @@ data class ChatState(
     val attachments: List<String> = emptyList(),
     /** Files (any type) picked for the next message, as (phone uri, display name). */
     val files: List<Pair<String, String>> = emptyList(),
+    /** Child agents this chat delegated to: running ones, and the ones that ended this turn. */
+    val subagents: List<Subagent> = emptyList(),
 ) {
     val busy: Boolean get() = status != "idle"
     val waiting: Boolean get() = status == "waiting" || LiveReducer.openApproval(items) != null ||
@@ -747,6 +751,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         var finished = false
         _chat.update { st ->
             var items = st.items
+            var subagents = st.subagents
             var status = st.status
             var title = st.title
             var model = st.model
@@ -781,12 +786,40 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                         }
                     }
                 }
-                items = LiveReducer.apply(items, ev.type, ev.payload, key)
+                if (SubagentReducer.handles(ev.type)) subagents = SubagentReducer.apply(subagents, ev.type, ev.payload, System.currentTimeMillis())
+                else items = LiveReducer.apply(items, ev.type, ev.payload, key)
             }
-            st.copy(items = items, status = status, title = title, model = model, provider = provider, reasoning = reasoning)
+            st.copy(items = items, status = status, title = title, model = model, provider = provider, reasoning = reasoning,
+                subagents = subagents)
         }
         _reasoning.value = _chat.value.reasoning ?: _reasoning.value
         if (finished) { scheduleSessionsRefresh(); viewModelScope.launch { refreshActive() }; resyncAfterTurn() }
+    }
+
+    /** Re-read the open chat's live children from Hermes. Runs on every [resume], so also after each
+     *  turn ([resyncAfterTurn]): a child still "running" then is either a background one or lost its end event. */
+    private fun refreshSubagents() {
+        val g = gateway ?: return
+        val rid = _chat.value.runtimeId ?: return
+        viewModelScope.launch {
+            val roster = try {
+                g.call("subagent.list", JSONObject().put("session_id", rid), 15_000)
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                return@launch  // an older bridge or Hermes: the live events still show them
+            }
+            _chat.update { if (it.runtimeId != rid) it else it.copy(subagents = SubagentReducer.fromRoster(it.subagents, roster)) }
+        }
+    }
+
+    /** Stop one child agent; the chat's own turn goes on. */
+    fun stopSubagent(id: String) {
+        viewModelScope.launch {
+            try {
+                val r = rpc("subagent.interrupt", { JSONObject().put("session_id", it).put("subagent_id", id) })
+                if (!r.optBoolean("found", true)) _toast.value = "That subagent had already finished."
+            } catch (t: Throwable) { say(t) }
+        }
     }
 
     /**
@@ -886,6 +919,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                     reasoning = info.str("reasoning_effort")?.ifBlank { null } ?: st.reasoning)
             }
             _chat.value.reasoning?.let { _reasoning.value = it }
+            refreshSubagents()  // delegations run in the background, so also when the turn is over
             true
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
@@ -1192,7 +1226,8 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         _suggestions.value = emptyList()
         _chat.update { it.copy(sending = true, draft = if (it.draft.trim() == display.trim()) "" else it.draft,
             attachments = emptyList(), files = emptyList(),
-            items = it.items + ChatItem.User(key, fileLabel(display, files), pending = true, images = pictures)) }
+            items = it.items + ChatItem.User(key, fileLabel(display, files), pending = true, images = pictures),
+            subagents = SubagentReducer.newTurn(it.subagents)) }
         drafts.put(_chat.value.sessionId, _chat.value.draft)
         viewModelScope.launch {
             try {

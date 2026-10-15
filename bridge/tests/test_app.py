@@ -260,6 +260,14 @@ def test_frame_filter():
     for method in ("vault.unlock", "vault.lock", "vault.source.set"):
         ok, err = check_frame(json.dumps({"jsonrpc": "2.0", "id": 9, "method": method}), 1000)
         assert ok is None and json.loads(err)["error"]["code"] == -32601
+    # Subagents: see them and stop one. Steering or spawning them stays on the PC.
+    for method in ("subagent.list", "subagent.interrupt"):
+        ok, err = check_frame(json.dumps({"jsonrpc": "2.0", "id": 11, "method": method,
+                                          "params": {"session_id": "a", "subagent_id": "s"}}), 1000)
+        assert ok and err is None
+    for method in ("subagent.steer", "subagent.tail"):
+        ok, err = check_frame(json.dumps({"jsonrpc": "2.0", "id": 10, "method": method}), 1000)
+        assert ok is None and json.loads(err)["error"]["code"] == -32601
     # config.set only for the chat's own settings.
     ok, err = check_frame(json.dumps({"jsonrpc": "2.0", "id": 3, "method": "config.set",
                                       "params": {"key": "model", "value": "x"}}), 1000)

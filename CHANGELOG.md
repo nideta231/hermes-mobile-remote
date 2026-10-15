@@ -3,6 +3,13 @@
 Releases are git tags; the version in the app comes from the tag. `git log v0.9.0..vX.Y.Z` is the
 authoritative history — this file only summarises what is worth knowing before upgrading.
 
+## Unreleased
+
+- Subagents. When the agent delegates work, a card under the chat shows each subagent: its task,
+  current tool, tool count, model and running time, then how it ended. *Stop* ends one subagent
+  without stopping the chat. Opening a chat mid-run catches up on the ones already running.
+- Bridge: the phone may call `subagent.list` and `subagent.interrupt` (needs the updated bridge).
+
 ## v1.13.1
 
 - Composer: Shift+Enter on a hardware keyboard inserts a newline at the cursor (replacing any
