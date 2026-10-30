@@ -17,6 +17,20 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## Unreleased
+
+- **Board attachments up to 10 MB, with a clear message**: attaching a file or picture to a board
+  card or comment failed for anything over about 1 MB (the bridge refused it before the upload
+  could start, with a vague "request body too large"). The limit is now 10 MB per file, shown next
+  to *Attach*; a bigger file is refused before it is sent, with its size and the limit
+  ("clip.mp4 is 24.5 MB; board attachments can be up to 10 MB"). Needs the updated bridge.
+- **Previews of board attachments**: pictures on a card or in a comment show as thumbnails (tap for
+  full screen, Info and Download), text files (Markdown, CSV, logs, code) show their first lines
+  under the file card.
+- **One bridge version**: the PC page and status showed the bridge as 1.0 while the PC bridge page
+  showed the release (e.g. 1.39.0). The bridge now reports only its release version everywhere.
+  Needs the updated bridge.
+
 ## v1.39.0
 
 - **Approve from the lock screen**: an approval notification now has *Deny*, *Allow* and *Allow for
