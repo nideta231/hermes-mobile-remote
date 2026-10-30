@@ -85,12 +85,26 @@ data class BpCard(
 data class BpComment(val id: String, val at: Double, val by: String, val kind: String, val text: String,
                      val resolved: Boolean = false, val files: List<String> = emptyList(),
                      /** The Hermes chat that wrote it (null: the phone, or an older bridge). */
-                     val session: String? = null) {
+                     val session: String? = null,
+                     /** One-tap answers Hermes offers on a question (each is a button). */
+                     val options: List<String> = emptyList(),
+                     /** Hermes wants a typed answer: the box's hint ("" = no hint), null = no box. */
+                     val input: String? = null) {
     val needsYou get() = (kind == "question" || kind == "review") && !resolved
 }
 
 /** The chat to tell that [m] on [card] was resolved on the phone: the one that asked, else the card's. */
 fun resolvedPingChat(card: BpCard, m: BpComment): String? = m.session ?: card.session
+
+/** A comment's `input`: a string is the answer box's hint, `true` a box without one; anything else, no box. */
+internal fun answerBoxHint(v: Any?): String? = when (v) { is String -> v; true -> ""; else -> null }
+
+/** What Hermes is told when the user answers its question [m] on the phone with [answer] (a button or the answer box). */
+fun answeredPingText(bp: Blueprint, card: BpCard, m: BpComment, answer: String): String {
+    val quote = m.text.lines().firstOrNull { it.isNotBlank() }.orEmpty().trim().let { if (it.length > 140) it.take(140) + "…" else it }
+    return "I answered your question on the card \"${card.title}\" in the ${bp.name} blueprint" +
+        (if (quote.isNotEmpty()) " (\"$quote\")" else "") + ": \"${answer.trim()}\". Carry on with that answer (it is also on the card)."
+}
 
 /** What Hermes is told when the user resolves its question/review from the phone. */
 fun resolvedPingText(bp: Blueprint, card: BpCard, m: BpComment): String {
@@ -146,7 +160,8 @@ data class Blueprint(
                         it.optDouble("order", 0.0), it.optDouble("updated", 0.0), it.str("agent"),
                         it.optJSONArray("comments").objects().map { m ->
                             BpComment(m.optString("id"), m.optDouble("at", 0.0), m.optString("by"), m.optString("kind", "comment"),
-                                m.optString("text"), m.optBoolean("resolved"), m.optJSONArray("files").strings(), m.str("session"))
+                                m.optString("text"), m.optBoolean("resolved"), m.optJSONArray("files").strings(), m.str("session"),
+                                m.optJSONArray("options").strings(), answerBoxHint(m.opt("input")))
                         }, it.str("session"), it.optJSONArray("files").strings())
                 },
                 o.optJSONArray("log").objects().map { BpLog(it.optDouble("at", 0.0), it.optString("by"), it.optString("text")) },

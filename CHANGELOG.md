@@ -17,6 +17,14 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## Unreleased
+
+- Blueprint boards: **Mark reviewed** / **Mark answered** no longer jumps to the chat. You stay on
+  the board; a message says Hermes got it and will continue, with a **View chat** button.
+- **One-tap answers**: when Hermes asks on a card it can offer answer buttons and/or a text box.
+  Tap a button (or type and Send) and the answer goes on the card and straight to the chat that
+  asked. Needs the updated bridge.
+
 ## v1.41.0
 
 - Blueprint boards: **Mark reviewed** / **Mark answered** on a Hermes question or review now tells

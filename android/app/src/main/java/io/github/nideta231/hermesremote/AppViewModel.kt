@@ -397,6 +397,12 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     private val _toast = MutableStateFlow<String?>(null)
     val toast: StateFlow<String?> = _toast.asStateFlow()
 
+    /** A snackbar with a "View chat" button: [text] about chat [sessionId] (e.g. Hermes got the user's review). */
+    data class ChatToast(val text: String, val sessionId: String)
+    private val _chatToast = MutableStateFlow<ChatToast?>(null)
+    val chatToast: StateFlow<ChatToast?> = _chatToast.asStateFlow()
+    fun consumeChatToast() { _chatToast.value = null }
+
     /** Something another app shared, copied and waiting for the user to pick a chat for it. */
     private val _pendingShare = MutableStateFlow<SharedContent?>(null)
     val pendingShare: StateFlow<SharedContent?> = _pendingShare.asStateFlow()
@@ -456,12 +462,56 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         } + rules)
     }
 
-    /** The user resolved Hermes' question/review [m] on the phone: tell the chat that asked. False when no chat is known. */
+    /**
+     * The user resolved Hermes' question/review [m] on the phone: tell the chat that asked, in the background
+     * (the user stays on the board; a snackbar confirms with "View chat"). False when no chat is known.
+     */
     fun blueprintResolved(b: io.github.nideta231.hermesremote.data.Blueprint, card: io.github.nideta231.hermesremote.data.BpCard,
                           m: io.github.nideta231.hermesremote.data.BpComment): Boolean {
         val sid = io.github.nideta231.hermesremote.data.resolvedPingChat(card, m) ?: return false
-        replyInChat(sid, io.github.nideta231.hermesremote.data.resolvedPingText(b, card, m))
+        pingChat(sid, io.github.nideta231.hermesremote.data.resolvedPingText(b, card, m),
+            if (m.kind == "review") "Hermes got your review and will continue." else "Hermes got your answer and will continue.")
         return true
+    }
+
+    /** The user answered Hermes' question [m] with [answer] (a button or the answer box): tell the chat that asked, in the background. */
+    fun blueprintAnswered(b: io.github.nideta231.hermesremote.data.Blueprint, card: io.github.nideta231.hermesremote.data.BpCard,
+                          m: io.github.nideta231.hermesremote.data.BpComment, answer: String): Boolean {
+        val sid = io.github.nideta231.hermesremote.data.resolvedPingChat(card, m) ?: return false
+        pingChat(sid, io.github.nideta231.hermesremote.data.answeredPingText(b, card, m, answer), "Hermes got your answer and will continue.")
+        return true
+    }
+
+    /**
+     * Send [text] to chat [sid] without opening it: a steer while it runs, a new turn when idle. Says [ok]
+     * with a "View chat" button; if it can't be delivered the text is drafted in that chat and the snackbar says so.
+     */
+    private fun pingChat(sid: String, text: String, ok: String) {
+        viewModelScope.launch {
+            try {
+                val c = _chat.value
+                if (c.sessionId == sid && c.runtimeId != null) {
+                    // The open chat: the normal paths, so its transcript shows the message too.
+                    if (c.busy) steer(text) else send(text)
+                } else {
+                    val g = gateway ?: throw IOException("Not connected to your PC")
+                    val r = g.call("session.resume", sessionParams(profile).put("session_id", sid), 60_000)
+                    val rid = r.getString("session_id")
+                    val info = r.optJSONObject("info") ?: JSONObject()
+                    LiveLink.watch(rid, sid, info.str("title"), profileParam(profile))
+                    val running = r.optBoolean("running") || info.optBoolean("running")
+                    val steered = running && g.call("session.steer", JSONObject().put("session_id", rid).put("text", text), 30_000)
+                        .optString("status") == "queued"
+                    if (!steered) g.call("prompt.submit", JSONObject().put("session_id", rid).put("text", text), 30_000)
+                    scheduleSessionsRefresh()
+                }
+                _chatToast.value = ChatToast(ok, sid)
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                drafts.put(sid, text)
+                _chatToast.value = ChatToast("Couldn't reach Hermes (${describe(t)}). The message is drafted in the chat.", sid)
+            }
+        }
     }
 
     /** Open chat [sid] and send [text] there: a steer while it runs, a new turn when idle; drafted if the chat won't open. */

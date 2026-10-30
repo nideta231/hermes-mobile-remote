@@ -48,4 +48,22 @@ class BlueprintCommentsTest {
         assertTrue(text, text.startsWith("I marked your review as reviewed on the card \"Deploy\" in the Shop blueprint (\"Check the export\")"))
         assertTrue(io.github.nideta231.hermesremote.data.resolvedPingText(bp, card, question).startsWith("I marked your question as answered"))
     }
+
+    @Test fun questionsCarryAnswerButtonsAndAnAnswerBox() {
+        val d = JSONObject("""{"project": {"id": "p1", "name": "Shop"}, "version": 1,
+          "board": {"columns": [{"id": "w", "name": "Working"}], "cards": [
+            {"id": "c1", "column": "w", "title": "Deploy", "comments": [
+              {"id": "m1", "at": 1.0, "by": "hermes", "kind": "question", "text": "Where?", "options": ["Staging", "Live"], "input": "or name a server", "session": "s1"},
+              {"id": "m2", "at": 2.0, "by": "hermes", "kind": "question", "text": "Notes?", "input": true},
+              {"id": "m3", "at": 3.0, "by": "hermes", "kind": "question", "text": "Plain"}]}]}}""")
+        val bp = Blueprint.parse(d)
+        val (a, b, c) = bp.cards[0].comments
+        assertEquals(listOf("Staging", "Live"), a.options)
+        assertEquals("or name a server", a.input)
+        assertEquals("", b.input)
+        assertTrue(b.options.isEmpty())
+        assertNull(c.input)
+        val text = io.github.nideta231.hermesremote.data.answeredPingText(bp, bp.cards[0], a, " Live ")
+        assertEquals("I answered your question on the card \"Deploy\" in the Shop blueprint (\"Where?\"): \"Live\". Carry on with that answer (it is also on the card).", text)
+    }
 }

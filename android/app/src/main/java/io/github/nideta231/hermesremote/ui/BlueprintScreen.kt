@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -48,6 +49,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Button
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -137,6 +139,8 @@ class BlueprintActions(
     val upload: suspend (String) -> String? = { null },
     /** The user resolved Hermes' question/review on [BpCard]: tell the chat that asked (no-op when none is known). */
     val resolved: (Blueprint, BpCard, io.github.nideta231.hermesremote.data.BpComment) -> Unit = { _, _, _ -> },
+    /** The user answered Hermes' question with a button or the answer box: tell the chat that asked. */
+    val answered: (Blueprint, BpCard, io.github.nideta231.hermesremote.data.BpComment, String) -> Unit = { _, _, _, _ -> },
 )
 
 private fun bpColor(name: String, dark: Boolean): Color = when (name) {
@@ -1052,6 +1056,11 @@ private fun CommentsSection(card: BpCard, bp: Blueprint, actions: BlueprintActio
                 }
                 if (m.text.isNotBlank()) Text(m.text, style = MaterialTheme.typography.bodyMedium)
                 if (m.files.isNotEmpty()) AttachmentPreviews(m.files, Modifier.padding(top = 2.dp))
+                if (open && (m.options.isNotEmpty() || m.input != null)) QuickAnswer(m) { answer ->
+                    actions.apply(arrayOf(BpOp.of("card.comment", "id" to card.id, "text" to answer, "resolves" to true))) {
+                        if (m.by == "hermes") actions.answered(bp, card, m, answer)
+                    }
+                }
                 if (m.kind != "comment") Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = {
                         val resolving = !m.resolved
@@ -1081,6 +1090,26 @@ private fun CommentsSection(card: BpCard, bp: Blueprint, actions: BlueprintActio
         TextButton(onClick = onAskHermes) {
             Icon(Glyphs.Spark, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Tell Hermes I replied")
         }
+}
+
+/** Hermes' one-tap answers to question [m] as buttons, plus its answer box when it asked for a typed answer. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun QuickAnswer(m: io.github.nideta231.hermesremote.data.BpComment, answer: (String) -> Unit) {
+    var sent by remember(m.id) { mutableStateOf(false) }
+    if (m.options.isNotEmpty()) androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        m.options.forEach { o ->
+            Button(onClick = { sent = true; answer(o) }, enabled = !sent, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)) {
+                Text(o, maxLines = 2)
+            }
+        }
+    }
+    val hint = m.input ?: return
+    var text by remember(m.id) { mutableStateOf("") }
+    OutlinedTextField(text, { text = it }, enabled = !sent, modifier = Modifier.fillMaxWidth(), minLines = 1, maxLines = 6,
+        placeholder = { Text(hint.ifBlank { "Type your answer" }) },
+        trailingIcon = { if (text.isNotBlank()) TextButton(onClick = { sent = true; answer(text.trim()) }, enabled = !sent) { Text("Send") } })
 }
 
 /** Ready-made rules for the agent instructions dialog, short enough to read at a glance. */

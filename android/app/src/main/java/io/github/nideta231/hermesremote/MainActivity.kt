@@ -37,7 +37,9 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.VerticalDivider
@@ -343,6 +345,14 @@ class MainActivity : ComponentActivity() {
         val scope = rememberCoroutineScope()
         val snack = remember { SnackbarHostState() }
         LaunchedEffect(toast) { toast?.let { snack.showSnackbar(it); vm.consumeToast() } }
+        val chatToast by vm.chatToast.collectAsState()
+        LaunchedEffect(chatToast) {
+            val t = chatToast ?: return@LaunchedEffect
+            vm.consumeChatToast()
+            if (snack.showSnackbar(t.text, actionLabel = "View chat", withDismissAction = true, duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed) {
+                vm.openSession(t.sessionId); page = Page.CHAT
+            }
+        }
         if (showChat.value) { page = Page.CHAT; showChat.value = false; scope.launch { drawer.close() } }
 
         val wide = LocalConfiguration.current.screenWidthDp >= 720
@@ -484,7 +494,8 @@ class MainActivity : ComponentActivity() {
                                 markSeen = { c -> vm.blueprints.markSeen(pid, c) },
                                 openGlobalSettings = { vm.blueprints.refreshList(); page = Page.SETTINGS },
                                 upload = vm::uploadBlueprintFile,
-                                resolved = { b, c, m -> if (vm.blueprintResolved(b, c, m)) page = Page.CHAT }),
+                                resolved = { b, c, m -> vm.blueprintResolved(b, c, m) },
+                                answered = { b, c, m, a -> vm.blueprintAnswered(b, c, m, a) }),
                                 onBack = { vm.blueprints.refreshList(); page = Page.CHAT })
                         } ?: run { page = Page.CHAT }
                         Page.BRIDGE -> BridgeAdminScreen(bridgeAdminState, BridgeAdminActions(refresh = vm.bridgeAdmin::refresh,
