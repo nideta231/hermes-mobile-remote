@@ -41,6 +41,7 @@ from . import local_secret
 from . import selfupdate
 from . import notes as notes_mod
 from . import blueprint as bp_mod
+from . import funnel as funnel_mod
 from .local_api import devices_doc, pairing_payload, pairing_uri, qr_png, trust_doc
 from .network import TrustStore, current_network, network_info, serving_lan_ips
 from .chat_files import referenced_file
@@ -184,6 +185,20 @@ class LocalName(BaseModel):
     name: str = Field(min_length=1, max_length=64)
 
 
+class FunnelEnroll(BaseModel):
+    public_key: str = Field(min_length=40, max_length=600)
+
+
+class FunnelUnlock(BaseModel):
+    nonce: str = Field(min_length=10, max_length=100)
+    signature: str = Field(min_length=40, max_length=400)
+
+
+class FunnelSet(BaseModel):
+    on: bool
+    port: int = 443
+
+
 class LocalNetworkId(BaseModel):
     id: str = Field(min_length=1, max_length=200)
 
@@ -235,18 +250,25 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
                devices: DeviceStore | None = None, owner_login: str | None = None,
                hermes_cli=None, trust: TrustStore | None = None,
                http: httpx.AsyncClient | None = None, monitor: Monitor | None = None,
-               shell_factory=None, park_sleep=asyncio.sleep) -> FastAPI:
+               shell_factory=None, park_sleep=asyncio.sleep, tailnet_socket: str | None = None) -> FastAPI:
     if monitor is None and cfg.monitor:
         monitor = Monitor(cfg.monitor_db, ClaudeUsage(cfg.claude_credentials) if cfg.claude_usage else None)
     shell_factory = shell_factory or (lambda **kw: Shell(cfg=cfg, **kw))
     locator = locator or BackendLocator(cfg.hermes_home, cfg.hermes_root, cfg.hermes_python, cfg.backend_log,
                                         hermes_bin=cfg.hermes_bin, spawn=cfg.start_hermes)
     cli = hermes_cli or (lambda *a: _hermes_cli(cfg, *a))
-    tailnet = tailnet or TailnetClient()
+    if tailnet is None:
+        from .tailnet import SOCKET as _ts_socket
+        tailnet = TailnetClient()
+        tailnet_socket = tailnet_socket or _ts_socket
     devices = devices or DeviceStore(cfg.devices_file)
     trust = trust or TrustStore(cfg.trust_file)
     http = http or httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=2.0))
     allowed_logins = set(cfg.allowed_logins) or ({owner_login} if owner_login else set())
+    funnel_store = funnel_mod.FunnelStore(cfg.funnel_file)
+    funnel_lock = funnel_mod.Lockout()
+    funnel_tickets = funnel_mod.Tickets()
+    serve_config = funnel_mod.ServeConfig(tailnet_socket)
     audit = _audit_logger(cfg)
     limiter = RateLimiter()
     metrics = BridgeMetrics(__version__, PROTOCOL)
@@ -318,8 +340,28 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
 
     # ------------------------------------------------------------ network guard (HTTP and WS)
 
-    async def peer_verdict(peer: str, scheme_secure: bool) -> tuple[str | None, tuple[int, str, str] | None]:
-        """(peer node label, rejection) for a connecting address."""
+    async def peer_verdict(peer: str, scheme_secure: bool, headers=None,
+                           path: str = "") -> tuple[str | None, tuple[int, str, str] | None]:
+        """(peer node label, rejection) for a connecting address. Loopback requests that tailscaled
+        proxied (Funnel from the internet, Serve from the tailnet) are NOT local: see funnel.py."""
+        via = funnel_mod.proxied(is_loopback(peer), headers or {})
+        if via == "funnel":
+            ip = funnel_mod.client_ip(headers)
+            if not cfg.funnel:
+                return None, (403, "funnel_off", "Internet access (Tailscale Funnel) is off on this PC")
+            if funnel_lock.locked(ip):
+                audit_event({"event": "funnel_locked_out", "ip": ip, "path": path})
+                return None, (429, "locked_out", "Too many failed attempts from this address; try again later")
+            if funnel_mod.route_class(path) == "never":
+                audit_event({"event": "funnel_refused", "ip": ip, "path": path})
+                return None, (403, "not_over_funnel", "Not available over the internet")
+            return f"funnel:{ip}", None
+        if via == "serve":
+            login = (headers.get(funnel_mod.LOGIN_HEADER) or "").strip()
+            if login not in allowed_logins:
+                audit_event({"event": "peer_rejected", "peer": "serve", "login": login or None})
+                return None, (403, "forbidden_peer", "This tailnet identity is not allowed")
+            return f"serve:{login}", None
         if is_loopback(peer):
             return "local", None
         if is_tailnet_ip(peer):
@@ -340,7 +382,7 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
         start = time.monotonic()
         peer = request.client.host if request.client else ""
         request.state.device = None
-        node, rejected = await peer_verdict(peer, request.url.scheme == "https")
+        node, rejected = await peer_verdict(peer, request.url.scheme == "https", request.headers, request.url.path)
         if rejected:
             return counted(request, start, _err(*rejected), "refused")
         request.state.peer_node = node
@@ -381,9 +423,28 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
     def _bearer(header: str) -> str:
         return header[7:].strip() if header.lower().startswith("bearer ") else ""
 
+    def funnel_gate(node: str | None, headers, path: str, device: Device | None) -> tuple[int, str, str] | None:
+        """Extra rules for a request that came over Tailscale Funnel; None = go on."""
+        if not str(node).startswith("funnel:"):
+            return None
+        ip = str(node).split(":", 1)[1]
+        if device is None:
+            funnel_lock.fail(ip)
+            return 401, "unauthorized", "Missing, invalid or revoked device token"
+        if not funnel_store.check(device.id, headers.get(funnel_mod.KEY_HEADER, "")):
+            if funnel_lock.fail(ip):
+                audit_event({"event": "funnel_locked_out", "ip": ip, "device": device.id})
+            audit_event({"event": "funnel_key_refused", "ip": ip, "device": device.id})
+            return 403, "funnel_not_allowed", "This phone is not allowed over the internet (allow it on the PC bridge page first)"
+        if funnel_mod.route_class(path) == "unlock" and not funnel_tickets.valid(device.id, headers.get(funnel_mod.UNLOCK_HEADER)):
+            return 403, "funnel_locked", "Unlock the app (fingerprint or PIN) to use this over the internet"
+        return None
+
     async def device_auth(request: Request) -> Device:
         token = _bearer(request.headers.get("authorization", ""))
         device = devices.authenticate(token) if token else None
+        if (gate := funnel_gate(request.state.peer_node, request.headers, request.url.path, device)) is not None:
+            raise ApiError(*gate)
         if device is None:
             raise ApiError(401, "unauthorized", "Missing, invalid or revoked device token")
         request.state.device = device
@@ -442,12 +503,102 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
         except Exception:
             return []
 
+    async def _funnel_url() -> str | None:
+        if not cfg.funnel or tailnet_socket is None:
+            return None
+        try:
+            return (await asyncio.to_thread(serve_config.status, cfg.port))["url"]
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------ Tailscale Funnel
+    # The phone opts in from the LAN/tailnet (never over Funnel): its hardware public key + a new
+    # Funnel key. Over Funnel, terminal/admin/etc. need a 5 minute ticket bought by signing a challenge.
+
+    @app.post("/v1/funnel/enroll")
+    async def funnel_enroll(body: FunnelEnroll, request: Request, device: Device = Depends(device_auth)):
+        if not cfg.funnel:
+            raise ApiError(404, "funnel_off", "Internet access (Tailscale Funnel) is off in config.toml")
+        try:
+            key = await asyncio.to_thread(funnel_store.enroll, device.id, body.public_key)
+        except ValueError as exc:
+            raise ApiError(400, "bad_key", str(exc))
+        audit_event({"event": "funnel_enroll", "device": device.id, "peer": request.state.peer_node})
+        return {"key": key, "url": await _funnel_url()}
+
+    @app.delete("/v1/funnel/enroll")
+    async def funnel_leave(device: Device = Depends(device_auth)):
+        gone = await asyncio.to_thread(funnel_store.remove, device.id)
+        audit_event({"event": "funnel_remove", "device": device.id, "removed": device.id})
+        return {"removed": gone}
+
+    @app.get("/v1/funnel/challenge")
+    async def funnel_challenge(device: Device = Depends(device_auth)):
+        if funnel_store.public_key(device.id) is None:
+            raise ApiError(403, "funnel_not_allowed", "This phone is not allowed over the internet")
+        return {"nonce": funnel_tickets.challenge(device.id), "expires_in": funnel_mod.CHALLENGE_SECONDS}
+
+    @app.post("/v1/funnel/unlock")
+    async def funnel_unlock(body: FunnelUnlock, request: Request, device: Device = Depends(device_auth)):
+        pub = funnel_store.public_key(device.id)
+        ok = pub is not None and funnel_mod.verify_signature(pub, funnel_mod.unlock_message(body.nonce, device.id), body.signature)
+        ticket = funnel_tickets.redeem(device.id, body.nonce, ok)
+        audit_event({"event": "funnel_unlock", "device": device.id, "peer": request.state.peer_node, "ok": ticket is not None})
+        if ticket is None:
+            node = str(request.state.peer_node)
+            if node.startswith("funnel:"):
+                funnel_lock.fail(node.split(":", 1)[1])
+            raise ApiError(403, "unlock_refused", "The unlock was not accepted; try again")
+        return {"ticket": ticket, "expires_in": funnel_mod.TICKET_SECONDS}
+
+    @app.get("/v1/admin/funnel")
+    async def admin_funnel(device: Device = Depends(device_auth)):
+        _admin_on()
+        if not cfg.funnel:
+            raise ApiError(404, "funnel_off", "Internet access (Tailscale Funnel) is off in config.toml")
+        try:
+            status = await asyncio.to_thread(serve_config.status, cfg.port)
+        except Exception as exc:  # noqa: BLE001
+            status = {"available": False, "reason": f"Can't read Tailscale's settings: {exc}", "url": None, "on": False}
+        names = {d.id: d.name for d in devices.list() if d.active}
+        allowed = await asyncio.to_thread(funnel_store.enrolled)
+        return {**status, "ports": list(funnel_mod.PUBLIC_PORTS),
+                "devices": [{"id": i, "name": names[i], "since": e.get("enrolled_at"), "this": i == device.id}
+                            for i, e in allowed.items() if i in names]}
+
+    @app.post("/v1/admin/funnel")
+    async def admin_funnel_set(body: FunnelSet, request: Request, device: Device = Depends(device_auth)):
+        _admin_on()
+        if not cfg.funnel:
+            raise ApiError(404, "funnel_off", "Internet access (Tailscale Funnel) is off in config.toml")
+        if body.on and str(request.state.peer_node).startswith("funnel:"):
+            raise ApiError(409, "over_funnel", "Switch Funnel on from home or over Tailscale")
+        try:
+            status = await asyncio.to_thread(serve_config.set, body.on, cfg.port, body.port)
+        except (RuntimeError, ValueError) as exc:
+            raise ApiError(409, "funnel_refused", str(exc))
+        except Exception as exc:  # noqa: BLE001
+            raise ApiError(502, "tailscale_error", f"Tailscale refused the change: {exc}")
+        audit_event({"event": "funnel_set", "device": device.id, "on": body.on, "port": body.port})
+        return status
+
+    @app.post("/v1/admin/funnel/remove")
+    async def admin_funnel_remove(body: LocalName, device: Device = Depends(device_auth)):
+        _admin_on()
+        target = next((d for d in devices.list() if d.active and (d.name == body.name or d.id == body.name)), None)
+        if target is None:
+            raise ApiError(404, "no_such_device", f"No paired device {body.name!r}")
+        gone = await asyncio.to_thread(funnel_store.remove, target.id)
+        audit_event({"event": "funnel_remove", "device": device.id, "removed": target.id})
+        return {"removed": gone}
+
     @app.get("/v1/me")
     async def me(request: Request, device: Device = Depends(device_auth)):
         """Identity, plus every address this bridge answers on so the client can offer a switch."""
         return {"device": {"id": device.id, "name": device.name, "created_at": device.created_at},
                 "peer_node": request.state.peer_node,
-                "via": "lan" if str(request.state.peer_node).startswith("lan:") else "tailnet",
+                "via": next((v for v in ("lan", "funnel") if str(request.state.peer_node).startswith(v + ":")), "tailnet"),
+                "funnel": {"url": await _funnel_url(), "allowed": funnel_store.check_id(device.id)} if cfg.funnel else None,
                 "port": cfg.port,
                 "addresses": {"lan": await asyncio.to_thread(serving_lan_ips, cfg.lan, trust),
                               "tailnet": await _tailnet_ips()},
@@ -465,6 +616,7 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
                                               ("bridge_update", cfg.self_update),
                                               ("notes", cfg.notes),
                                               ("blueprints", cfg.blueprints),
+                                              ("funnel", cfg.funnel and tailnet_socket is not None),
                                               ("admin", cfg.remote_admin),
                                               ("parked", cfg.remote_admin)) if on],
                 "bridge_version": __version__, "protocol": PROTOCOL}
@@ -1283,7 +1435,7 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
     async def ws_device(ws: WebSocket, endpoint: str) -> tuple[str | None, Device | None]:
         """Same gate as HTTP: network, then the device token from the upgrade request's header."""
         peer = ws.client.host if ws.client else ""
-        node, rejected = await peer_verdict(peer, ws.url.scheme == "wss")
+        node, rejected = await peer_verdict(peer, ws.url.scheme == "wss", ws.headers, ws.url.path)
         if rejected:
             metrics.ws_rejected.inc(endpoint=endpoint, reason="network")
             await ws.close(code=4403, reason=rejected[2])
@@ -1292,6 +1444,11 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
         # never in the URL, so it stays out of every log line.
         token = _bearer(ws.headers.get("authorization", ""))
         device = devices.authenticate(token) if token else None
+        if (gate := funnel_gate(node, ws.headers, ws.url.path, device)) is not None:
+            audit_event({"event": "ws_refused", "peer": node, "path": ws.url.path, "code": gate[1]})
+            metrics.ws_rejected.inc(endpoint=endpoint, reason=gate[1])
+            await ws.close(code=4403 if gate[0] == 403 else 4401, reason=gate[2])
+            return node, None
         if device is None:
             audit_event({"event": "ws_unauthorized", "peer": node, "path": ws.url.path})
             metrics.ws_rejected.inc(endpoint=endpoint, reason="unauthorized")
@@ -1325,7 +1482,10 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
         relay = Relay(locator, max_frame_bytes=cfg.max_frame_bytes,
                       allow_frame=lambda: limiter.allow(frames_key, cfg.frames_per_minute),
                       audit=lambda e: audit_event({**e, "peer": node}),
-                      allowed_profiles=cfg.allowed_profiles, parked=parked, metrics=metrics)
+                      allowed_profiles=cfg.allowed_profiles, parked=parked, metrics=metrics,
+                      # over the internet: no vault, and approvals can't be turned off
+                      **({"refused_methods": funnel_mod.RESTRICTED_METHODS,
+                          "refused_config_keys": funnel_mod.RESTRICTED_CONFIG_KEYS} if str(node).startswith("funnel:") else {}))
         await relay.run(ws, device.name, device.id)
 
     app.state.locator = locator

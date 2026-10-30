@@ -88,7 +88,8 @@ class Verdict(NamedTuple):
     frame: dict | None = None
 
 
-def inspect_frame(raw: str, max_bytes: int, allowed_profiles: Iterable[str] = ()) -> Verdict:
+def inspect_frame(raw: str, max_bytes: int, allowed_profiles: Iterable[str] = (),
+                  refused_methods: frozenset = frozenset(), refused_config_keys: frozenset = frozenset()) -> Verdict:
     """Validate one phone→Hermes frame."""
     if len(raw.encode()) > max_bytes:
         return Verdict(None, _error(None, -32600, "Frame too large"), "too_large")
@@ -105,7 +106,7 @@ def inspect_frame(raw: str, max_bytes: int, allowed_profiles: Iterable[str] = ()
         if isinstance(rid, str) and _SERVER_REQUEST_ID.match(rid) and ("result" in frame or "error" in frame):
             return Verdict(raw, None, frame=frame)
         return Verdict(None, None, "stray_response")  # nothing to answer a stray response with
-    if not isinstance(method, str) or method not in ALLOWED_METHODS:
+    if not isinstance(method, str) or method not in ALLOWED_METHODS or method in refused_methods:
         return Verdict(None, _error(rid, -32601, f"Method not available from the phone: {method}"), "method")
     params = frame.get("params")
     if isinstance(params, dict) and params.get("profile") is not None:
@@ -115,7 +116,7 @@ def inspect_frame(raw: str, max_bytes: int, allowed_profiles: Iterable[str] = ()
             return Verdict(None, _error(rid, -32602, str(exc)), "profile")
     if method == "config.set":
         key = (params or {}).get("key") if isinstance(params, dict) else None
-        if key not in ALLOWED_CONFIG_KEYS:
+        if key not in ALLOWED_CONFIG_KEYS or key in refused_config_keys:
             return Verdict(None, _error(rid, -32602, f"config key not available from the phone: {key}"), "config_key")
     if method == "subagent.steer" and (problem := _steer_text_problem(params)):
         return Verdict(None, _error(rid, -32602, problem), "steer_text")
@@ -313,7 +314,10 @@ class Relay:
     def __init__(self, locator: BackendLocator, *, max_frame_bytes: int,
                  allow_frame: Callable[[], bool], audit: Callable[[dict], None],
                  allowed_profiles: Iterable[str] = (), parked: ParkedUpstreams | None = None,
-                 metrics: BridgeMetrics | None = None):
+                 metrics: BridgeMetrics | None = None,
+                 refused_methods: frozenset = frozenset(), refused_config_keys: frozenset = frozenset()):
+        self.refused_methods = refused_methods  # e.g. over Tailscale Funnel: the vault
+        self.refused_config_keys = refused_config_keys
         self.locator = locator
         self.metrics = metrics or BridgeMetrics("", 0)
         self.max_frame_bytes = max_frame_bytes
@@ -375,7 +379,8 @@ class Relay:
                     stats.refused("rate_limited")
                     await phone.send_text(_error(None, -32000, "Too many requests"))
                     continue
-                verdict = inspect_frame(raw, self.max_frame_bytes, self.allowed_profiles)
+                verdict = inspect_frame(raw, self.max_frame_bytes, self.allowed_profiles,
+                                        self.refused_methods, self.refused_config_keys)
                 if verdict.refused:
                     stats.refused(verdict.refused)
                 if verdict.reply:

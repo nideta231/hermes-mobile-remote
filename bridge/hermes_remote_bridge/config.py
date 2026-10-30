@@ -89,6 +89,10 @@ class Config:
     notes_dir: Path = CONFIG_DIR / "notes"
     # Project blueprints (flow diagram + task board per Hermes project), read and edited by Hermes too.
     blueprints: bool = True
+    # Tailscale Funnel (the bridge on the public internet): the phone's PC bridge page may switch it on
+    # and allow single phones. Off by default in Tailscale itself; false here refuses it entirely.
+    funnel: bool = True
+    funnel_file: Path = CONFIG_DIR / "funnel.json"
     blueprints_dir: Path = CONFIG_DIR / "blueprints"
 
     @classmethod
