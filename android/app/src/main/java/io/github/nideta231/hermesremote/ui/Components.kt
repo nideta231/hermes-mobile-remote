@@ -61,6 +61,9 @@ import androidx.compose.ui.unit.Dp
 import kotlinx.coroutines.delay
 
 /** Bridge-only features the active host lacks (a gateway host): screens and controls behind them are not drawn. */
+/** The app's snackbar, so a bottom sheet (its own window, drawn above the app) can show the same messages inside it. */
+val LocalSnackbar = androidx.compose.runtime.staticCompositionLocalOf<androidx.compose.material3.SnackbarHostState?> { null }
+
 val LocalHiddenFeatures = androidx.compose.runtime.staticCompositionLocalOf<Set<io.github.nideta231.hermesremote.data.HostFeature>> { emptySet() }
 
 /** Line icons drawn from SVG paths (24×24), so the app needs no icon dependency beyond the core set. */

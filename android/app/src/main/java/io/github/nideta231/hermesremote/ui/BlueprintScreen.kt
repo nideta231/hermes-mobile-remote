@@ -79,6 +79,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -959,9 +960,14 @@ private fun CardSheet(card: BpCard, bp: Blueprint, actions: BlueprintActions, on
         if (body != card.body) upd("body" to body)
     }
     BackHandler { saveText(); onDismiss() }
+    val scroll = rememberScrollState()
+    // A swipe down that starts with the card scrolled down only scrolls it back to the top; it is not
+    // handed on to the sheet (which used to take the leftover and close mid-scroll). From the top it still closes.
+    val keepScroll = remember(scroll) { SheetScrollGuard { scroll.value } }
     ModalBottomSheet(onDismissRequest = { saveText(); onDismiss() }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surfaceContainer) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 20.dp).padding(bottom = 28.dp),
+      Box {
+        Column(Modifier.fillMaxWidth().nestedScroll(keepScroll).verticalScroll(scroll).imePadding().padding(horizontal = 20.dp).padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(title, { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth(), textStyle = MaterialTheme.typography.titleMedium,
                 isError = title.trim().length > BpLimits.TITLE, supportingText = { LimitText(title, BpLimits.TITLE) })
@@ -1018,10 +1024,37 @@ private fun CardSheet(card: BpCard, bp: Blueprint, actions: BlueprintActions, on
                 TextButton(onClick = { confirmDelete = true }) { Text("Delete", color = Bad) }
             }
         }
+        // The sheet is its own window above the app: show the app's snackbar (e.g. "Hermes got your review", View chat) here too.
+        LocalSnackbar.current?.let { androidx.compose.material3.SnackbarHost(it, Modifier.align(Alignment.BottomCenter).imePadding().padding(bottom = 12.dp)) }
+      }
     }
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Delete this card?") },
         confirmButton = { TextButton(onClick = { confirmDelete = false; actions.apply(arrayOf(BpOp.of("card.remove", "id" to card.id))) {}; onDismiss() }) { Text("Delete", color = Bad) } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } })
+}
+
+/**
+ * Keeps a bottom sheet open while its content is scrolled back up: the leftover of a drag or fling that
+ * began below the top is consumed here instead of reaching the sheet. A gesture that starts at the top
+ * passes through, so swiping down from the top still closes the sheet.
+ */
+internal class SheetScrollGuard(private val offset: () -> Int) : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+    /** null = no gesture yet; true = this gesture began at the top. */
+    private var fromTop: Boolean? = null
+
+    override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource) =
+        androidx.compose.ui.geometry.Offset.Zero.also { if (fromTop == null) fromTop = offset() == 0 }
+
+    override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset,
+                              source: androidx.compose.ui.input.nestedscroll.NestedScrollSource) =
+        if (fromTop == false && available.y > 0f) available.copy(x = 0f) else androidx.compose.ui.geometry.Offset.Zero
+
+    override suspend fun onPostFling(consumed: androidx.compose.ui.unit.Velocity, available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+        val keep = fromTop == false && available.y > 0f
+        fromTop = null
+        return if (keep) available.copy(x = 0f) else androidx.compose.ui.unit.Velocity.Zero
+    }
+
 }
 
 /** Marks the "Waiting for you" board filter (not a real tag). */

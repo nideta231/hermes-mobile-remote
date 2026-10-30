@@ -65,6 +65,7 @@ import io.github.nideta231.hermesremote.data.HostKind
 import io.github.nideta231.hermesremote.data.Notifier
 import io.github.nideta231.hermesremote.data.hiddenFeatures
 import io.github.nideta231.hermesremote.ui.LocalHiddenFeatures
+import io.github.nideta231.hermesremote.ui.LocalSnackbar
 import io.github.nideta231.hermesremote.ui.ChatActions
 import io.github.nideta231.hermesremote.ui.BridgeAdminActions
 import io.github.nideta231.hermesremote.ui.BlueprintActions
@@ -287,7 +288,8 @@ class MainActivity : ComponentActivity() {
                     UpdateSheet(update, onInstall = vm.updates::installUpdate, onDismiss = { pairUpdateSheet = false })
             } else {
                 val hidden = hiddenFeatures(if (gw != null) HostKind.GATEWAY else HostKind.BRIDGE)
-                androidx.compose.runtime.CompositionLocalProvider(LocalHiddenFeatures provides hidden) { PairedApp() }
+                androidx.compose.runtime.CompositionLocalProvider(LocalHiddenFeatures provides hidden,
+                    LocalSnackbar provides rememberAppSnackbar()) { PairedApp() }
             }
         }
         val offer by vm.linkOffer.collectAsState()
@@ -343,7 +345,7 @@ class MainActivity : ComponentActivity() {
         var page by rememberSaveable { mutableStateOf(Page.CHAT) }
         val drawer = rememberDrawerState(DrawerValue.Closed)
         val scope = rememberCoroutineScope()
-        val snack = remember { SnackbarHostState() }
+        val snack = rememberAppSnackbar()
         LaunchedEffect(toast) { toast?.let { snack.showSnackbar(it); vm.consumeToast() } }
         val chatToast by vm.chatToast.collectAsState()
         LaunchedEffect(chatToast) {
@@ -560,3 +562,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+/** One snackbar for the whole app: the same state is shown by MainActivity's host and inside open bottom sheets. */
+@Composable
+private fun rememberAppSnackbar(): SnackbarHostState = LocalSnackbar.current ?: remember { SnackbarHostState() }
