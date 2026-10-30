@@ -482,7 +482,8 @@ class MainActivity : ComponentActivity() {
                                 fetchFile = vm.blueprints::file, fileInfo = vm.blueprints::fileInfo,
                                 unread = { c -> seenTick.let { vm.blueprints.seen?.unread(pid, c) ?: 0 } },
                                 markSeen = { c -> vm.blueprints.markSeen(pid, c) },
-                                openGlobalSettings = { vm.blueprints.refreshList(); page = Page.SETTINGS }),
+                                openGlobalSettings = { vm.blueprints.refreshList(); page = Page.SETTINGS },
+                                upload = vm::uploadBlueprintFile),
                                 onBack = { vm.blueprints.refreshList(); page = Page.CHAT })
                         } ?: run { page = Page.CHAT }
                         Page.BRIDGE -> BridgeAdminScreen(bridgeAdminState, BridgeAdminActions(refresh = vm.bridgeAdmin::refresh,

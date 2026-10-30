@@ -113,6 +113,9 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import androidx.compose.animation.core.animateFloat
 import org.json.JSONObject
+import kotlinx.coroutines.launch
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 
 class BlueprintActions(
     val open: (String) -> Unit,
@@ -130,6 +133,8 @@ class BlueprintActions(
     val markSeen: (BpCard) -> Unit = {},
     /** Open the app's Settings at the global board settings. */
     val openGlobalSettings: () -> Unit = {},
+    /** Send a picked file (content uri) to the PC; answers its PC path, or null when it failed (already said why). */
+    val upload: suspend (String) -> String? = { null },
 )
 
 private fun bpColor(name: String, dark: Boolean): Color = when (name) {
@@ -893,6 +898,7 @@ private fun BoardCard(card: BpCard, bp: Blueprint, dark: Boolean, ghost: Boolean
                 card.due?.let { add("⏰ $it") }
                 card.assignee?.let { add(if (it == "hermes") "✦ Hermes" else "● Me") }
                 if (card.comments.isNotEmpty()) add("💬 ${card.comments.size}")
+                if (card.files.isNotEmpty()) add("📎 ${card.files.size}")
                 card.node?.let { id -> bp.nodes.firstOrNull { it.id == id }?.let { add("◇ ${it.label}") } }
             }
             if (meta.isNotEmpty()) Text(meta.joinToString("   "), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -951,7 +957,8 @@ private fun CardSheet(card: BpCard, bp: Blueprint, actions: BlueprintActions, on
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 bp.columns.forEach { c -> FilterChip(card.column == c.id, { actions.apply(arrayOf(BpOp.of("card.move", "id" to card.id, "column" to c.id))) {} }, { Text(c.name) }, colors = themedChip()) }
             }
-            OutlinedTextField(body, { body = it }, label = { Text("Description") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+            DescriptionEditor(body, { body = it })
+            CardFiles(card.files, actions, onChange = { upd("files" to it) })
             SectionLabel("Checklist" + card.progress.let { (d, t) -> if (t > 0) "  $d/$t" else "" })
             card.checklist.forEachIndexed { i, item ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1016,6 +1023,8 @@ private const val WAITING = "\u0000waiting"
 @Composable
 private fun CommentsSection(card: BpCard, bp: Blueprint, actions: BlueprintActions, onAskHermes: () -> Unit) {
     var draft by remember(card.id) { mutableStateOf("") }
+    /** Files picked for the comment being written (PC paths, already uploaded). */
+    var pendingFiles by remember(card.id) { mutableStateOf(listOf<String>()) }
     val fmt = remember { java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT) }
     val asks = card.openAsks
     SectionLabel("Comments" + if (card.comments.isNotEmpty()) "  ${card.comments.size}" else "")
@@ -1047,12 +1056,18 @@ private fun CommentsSection(card: BpCard, bp: Blueprint, actions: BlueprintActio
             }
         }
     }
-    OutlinedTextField(draft, { draft = it }, placeholder = { Text(if (asks.isNotEmpty()) "Answer Hermes…" else "Add a comment") },
-        minLines = 1, maxLines = 6, modifier = Modifier.fillMaxWidth(),
-        trailingIcon = { if (draft.isNotBlank()) TextButton(onClick = {
-            actions.apply(arrayOf(BpOp.of("card.comment", "id" to card.id, "text" to draft.trim(), "resolves" to asks.isNotEmpty()))) {}
-            draft = ""
-        }) { Text(if (asks.isNotEmpty()) "Answer" else "Send") } })
+    if (pendingFiles.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        pendingFiles.forEach { f -> FilterChip(true, { pendingFiles = pendingFiles - f }, { Text(io.github.nideta231.hermesremote.data.fileName(f) + "  ×") }, colors = themedChip()) }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        AttachButton(actions, "Attach to comment") { pendingFiles = (pendingFiles + it).distinct().take(10) }
+        OutlinedTextField(draft, { draft = it }, placeholder = { Text(if (asks.isNotEmpty()) "Answer Hermes…" else "Add a comment") },
+            minLines = 1, maxLines = 6, modifier = Modifier.weight(1f),
+            trailingIcon = { if (draft.isNotBlank() || pendingFiles.isNotEmpty()) TextButton(onClick = {
+                actions.apply(arrayOf(BpOp.of("card.comment", "id" to card.id, "text" to draft.trim(), "files" to pendingFiles, "resolves" to asks.isNotEmpty()))) {}
+                draft = ""; pendingFiles = emptyList()
+            }) { Text(if (asks.isNotEmpty()) "Answer" else "Send") } })
+    }
     if (card.comments.any { it.by == "phone" } && card.comments.lastOrNull()?.by == "phone")
         TextButton(onClick = onAskHermes) {
             Icon(Glyphs.Spark, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Tell Hermes I replied")
@@ -1212,5 +1227,83 @@ private fun InboxSheet(bp: Blueprint, actions: BlueprintActions, onDismiss: () -
                 }
             }
         }
+    }
+}
+
+
+// ================================================================ Description + attachments
+
+/**
+ * The card description as a small rich text editor: shown formatted (Markdown) and tap *Edit* for a
+ * toolbar that formats the selection (bold, italic, heading, list, checklist, code, link). The text
+ * stays Markdown, so Hermes reads exactly what the board shows.
+ */
+@Composable
+private fun DescriptionEditor(body: String, onChange: (String) -> Unit) {
+    var editing by remember { mutableStateOf(body.isBlank()) }
+    var value by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(body)) }
+    if (value.text != body && !editing) value = androidx.compose.ui.text.input.TextFieldValue(body)
+    fun set(v: androidx.compose.ui.text.input.TextFieldValue) { value = v; onChange(v.text) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        SectionLabel("Description")
+        Spacer(Modifier.weight(1f))
+        if (body.isNotBlank()) TextButton(onClick = { editing = !editing }) { Text(if (editing) "Done" else "Edit") }
+    }
+    if (!editing) {
+        Surface(onClick = { editing = true }, shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+            MarkdownText(body, Modifier.padding(12.dp))
+        }
+        return
+    }
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        @Composable fun tool(label: String, desc: String, style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.labelLarge, act: () -> Unit) =
+            Surface(onClick = act, shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                modifier = Modifier.semantics { contentDescription = desc }) {
+                Text(label, style = style, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+            }
+        tool("B", "Bold", MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)) { set(RichEdit.wrap(value, "**")) }
+        tool("I", "Italic", MaterialTheme.typography.labelLarge.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)) { set(RichEdit.wrap(value, "*")) }
+        tool("H", "Heading") { set(RichEdit.prefixLines(value, "## ")) }
+        tool("•", "Bulleted list") { set(RichEdit.prefixLines(value, "- ")) }
+        tool("1.", "Numbered list") { set(RichEdit.prefixLines(value, "1. ")) }
+        tool("☐", "Checklist") { set(RichEdit.prefixLines(value, "- [ ] ")) }
+        tool("❝", "Quote") { set(RichEdit.prefixLines(value, "> ")) }
+        tool("</>", "Code") { set(RichEdit.wrap(value, "`")) }
+        tool("Link", "Link") { set(RichEdit.link(value)) }
+    }
+    OutlinedTextField(value, { set(it) }, placeholder = { Text("What needs doing, details, links…") }, minLines = 4, modifier = Modifier.fillMaxWidth())
+}
+
+/** Files attached to the card itself (open/save/info like chat files); *Attach* sends one from the phone. */
+@Composable
+private fun CardFiles(files: List<String>, actions: BlueprintActions, onChange: (List<String>) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        SectionLabel("Attachments" + if (files.isNotEmpty()) "  ${files.size}" else "")
+        Spacer(Modifier.weight(1f))
+        AttachButton(actions, "Attach file or picture", label = "Attach") { onChange((files + it).distinct()) }
+    }
+    files.forEach { f ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FileCards(listOf(f), Modifier.weight(1f))
+            IconButton(onClick = { onChange(files - f) }) { Icon(Glyphs.Close, "Remove attachment", Modifier.size(16.dp)) }
+        }
+    }
+}
+
+/** Pick any file or picture on the phone and upload it to the PC; [onUploaded] gets its PC path. */
+@Composable
+private fun AttachButton(actions: BlueprintActions, desc: String, label: String? = null, onUploaded: (String) -> Unit) {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    val pick = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        busy = true
+        scope.launch { try { actions.upload(uri.toString())?.let(onUploaded) } finally { busy = false } }
+    }
+    if (label == null) IconButton(onClick = { if (!busy) pick.launch("*/*") }) {
+        if (busy) TypingDots(Gold) else Icon(Glyphs.Paperclip, desc, Modifier.size(20.dp))
+    } else TextButton(onClick = { if (!busy) pick.launch("*/*") }) {
+        if (busy) TypingDots(Gold) else { Icon(Glyphs.Paperclip, desc, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(label) }
     }
 }

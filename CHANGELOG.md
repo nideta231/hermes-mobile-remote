@@ -17,6 +17,17 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## v1.38.0
+
+- **Attach files and pictures to blueprint cards**: a card has an *Attachments* section with an
+  *Attach* button (any file or picture from the phone), and the comment box has a paperclip, so a
+  comment can carry files too. They are stored on the PC (open, save and info work like chat files),
+  the card shows 📎 with the count, and Hermes sees them in the blueprint. Needs the updated bridge.
+- **Card description is a rich text editor**: it shows formatted (headings, bold, lists, checklists,
+  links, code) and *Edit* opens a toolbar that formats the selected text: bold, italic, heading,
+  bulleted/numbered list, checklist, quote, code and link. Stored as Markdown, so Hermes reads the
+  same thing.
+
 ## v1.37.0
 
 - **Global agent instructions**: Settings > Blueprint boards now has *Agent instructions (global)*,

@@ -423,6 +423,15 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         seen = io.github.nideta231.hermesremote.data.BlueprintSeen(app),
         notify = { pid, name, m -> Notifier.postBlueprintComment(app, pid, name, m) })
 
+    /** A file picked on the phone, sent to the PC for the open blueprint; null (and a toast) when it fails. */
+    suspend fun uploadBlueprintFile(uri: String): String? = try {
+        val (bytes, name) = io.github.nideta231.hermesremote.data.FileAttachments.read(app, uri)
+        blueprints.upload(bytes, name).also { _toast.value = "Attached $name" }
+    } catch (t: Throwable) {
+        if (t is kotlinx.coroutines.CancellationException) throw t
+        _toast.value = describe(t); null
+    }
+
     /** New chat in [b]'s project with a drafted ask (the user sends it): work from the blueprint, take control, or do one card. */
     fun askHermesBlueprint(b: io.github.nideta231.hermesremote.data.Blueprint, what: String) {
         // An answer on a card goes back to the chat that asked (steered if it is still running), not a new one.

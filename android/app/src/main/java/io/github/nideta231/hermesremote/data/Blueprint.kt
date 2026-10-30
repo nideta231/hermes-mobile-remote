@@ -74,6 +74,8 @@ data class BpCard(
     val comments: List<BpComment> = emptyList(),
     /** The Hermes chat last working on or commenting on it (null: unknown, e.g. an older bridge). */
     val session: String? = null,
+    /** Files attached to the description (paths on the PC). */
+    val files: List<String> = emptyList(),
 ) {
     val progress get() = checklist.count { it.done } to checklist.size
     val openAsks get() = comments.filter { it.needsYou }
@@ -132,7 +134,7 @@ data class Blueprint(
                         it.optJSONArray("comments").objects().map { m ->
                             BpComment(m.optString("id"), m.optDouble("at", 0.0), m.optString("by"), m.optString("kind", "comment"),
                                 m.optString("text"), m.optBoolean("resolved"), m.optJSONArray("files").strings())
-                        }, it.str("session"))
+                        }, it.str("session"), it.optJSONArray("files").strings())
                 },
                 o.optJSONArray("log").objects().map { BpLog(it.optDouble("at", 0.0), it.optString("by"), it.optString("text")) },
                 o.optString("instructions"),
@@ -381,6 +383,13 @@ class BlueprintRepo(
             } finally { inFlight = (inFlight - 1).coerceAtLeast(0) }
             if (failed) load(bp.projectId)  // put back what the bridge really has
         }
+    }
+
+    /** Send a file from the phone to the PC for this blueprint; answers its PC path (for a card's or comment's `files`). */
+    suspend fun upload(bytes: ByteArray, name: String): String {
+        val c = client() ?: throw java.io.IOException("Not connected to the PC")
+        val pid = _state.value.open?.projectId ?: throw java.io.IOException("No blueprint open")
+        return c.blueprintUpload(pid, name, bytes).optString("path").ifEmpty { throw java.io.IOException("The PC did not store $name") }
     }
 
     /** A file a card comment attaches, downloaded into the app's cache (reused when already there). */

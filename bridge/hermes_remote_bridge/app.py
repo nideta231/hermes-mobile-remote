@@ -589,6 +589,22 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
             raise ApiError(403, "not_attached", "No comment on this board attaches that file")
         return target
 
+    @app.post("/v1/blueprints/{pid}/upload")
+    async def upload_blueprint_file(pid: str, name: str, request: Request, device: Device = Depends(device_auth)):
+        """A file the phone attaches to a card (description or comment). Raw body; answers its PC path,
+        which the phone then puts in a card.update `files` or card.comment `files` op."""
+        _bp_on()
+        await asyncio.to_thread(_bp, pid)
+        if int(request.headers.get("content-length") or 0) > bp_mod.MAX_UPLOAD:
+            raise ApiError(413, "too_large", f"File too large (max {bp_mod.MAX_UPLOAD // (1024 * 1024)} MB)")
+        data = await request.body()
+        try:
+            path = await asyncio.to_thread(bp_store.upload, pid, name, data)
+        except bp_mod.BlueprintError as exc:
+            raise ApiError(413, "too_large", str(exc))
+        audit_event({"event": "blueprint_upload", "device": device.id, "project": pid, "bytes": len(data)})
+        return {"path": path, "name": os.path.basename(path), "size": len(data)}
+
     @app.get("/v1/blueprints/{pid}/file")
     async def get_blueprint_file(pid: str, path: str, _: Device = Depends(device_auth)):
         """A file a card comment attaches (a result Hermes shared), for the phone to open or save."""

@@ -105,6 +105,16 @@ class BridgeClient(
 
     /** A file a blueprint card comment attaches, streamed into [dest]. */
     suspend fun blueprintFile(projectId: String, path: String, dest: java.io.File) = runInterruptible(Dispatchers.IO) { download(url("/v1/blueprints/${enc(projectId)}/file", mapOf("path" to path)), dest) }
+    /** A file the phone attaches to a blueprint card; the bridge stores it and answers `{path, name, size}`. */
+    suspend fun blueprintUpload(projectId: String, name: String, bytes: ByteArray): JSONObject = runInterruptible(Dispatchers.IO) {
+        val req = Request.Builder().url(url("/v1/blueprints/${enc(projectId)}/upload", mapOf("name" to name)))
+            .post(bytes.toRequestBody("application/octet-stream".toMediaType())).build()
+        http.newBuilder().writeTimeout(120, TimeUnit.SECONDS).build().newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw parseError(resp, text)
+            JSONObject(text)
+        }
+    }
     suspend fun trashBlueprint(projectId: String) = call("DELETE", "/v1/blueprints/${enc(projectId)}")
     suspend fun restoreBlueprint(trashId: String) = call("POST", "/v1/blueprints-trash/${enc(trashId)}/restore")
     suspend fun purgeBlueprint(trashId: String) = call("DELETE", "/v1/blueprints-trash/${enc(trashId)}")

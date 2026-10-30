@@ -220,6 +220,16 @@ def test_routes(tmp_path):
     assert r == {"defaults": {"new_cards": "top"}, "default_instructions": "Read the docs first."}
     assert c.get("/v1/blueprints", headers=h).json()["default_instructions"] == "Read the docs first."
     assert c.get("/v1/blueprints/p1", headers=h).json()["default_instructions"] == "Read the docs first."
+    # The phone attaches a picture: stored under blueprints_dir/files/<pid>, served once a card names it
+    up = c.post("/v1/blueprints/p1/upload?name=../../etc/shot%20one.png", content=b"\x89PNG data", headers=h).json()
+    assert up["name"] == "shot one.png" and up["path"].startswith(str(cfg.blueprints_dir / "files" / "p1"))
+    assert c.get("/v1/blueprints/p1/file", params={"path": up["path"]}, headers=h).status_code == 403  # not attached yet
+    cid = c.get("/v1/blueprints/p1", headers=h).json()["board"]["cards"][0]["id"]
+    c.post("/v1/blueprints/p1/ops", json={"ops": [{"op": "card.update", "id": cid, "files": [up["path"]]}]}, headers=h)
+    assert c.get("/v1/blueprints/p1/file", params={"path": up["path"]}, headers=h).content == b"\x89PNG data"
+    up2 = c.post("/v1/blueprints/p1/upload?name=shot%20one.png", content=b"x", headers=h).json()
+    assert up2["name"] == "shot one-2.png"
+    assert "attached: " in bp.to_markdown(bp.BlueprintStore(cfg.blueprints_dir).get("p1"))
 
 
 def test_comment_files_are_the_only_files_served(tmp_path):

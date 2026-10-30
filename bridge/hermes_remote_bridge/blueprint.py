@@ -44,6 +44,8 @@ MAX_COMMENTS = 200
 # column) without an explicit position lands. aging_days: fade cards untouched that long (0 = off).
 SETTINGS = {"new_cards": ("bottom", "top"), "aging_days": (0, 3, 7, 14, 30), "sticky_add": (False, True)}
 MAX_COMMENT_FILES = 10
+MAX_CARD_FILES = 30
+MAX_UPLOAD = 50 * 1024 * 1024  # one file the phone attaches to a card or comment
 DEFAULT_COLUMNS = (("docs", "Docs", "purple"), ("todo", "Todo", "blue"), ("working", "Working", "orange"), ("done", "Done", "green"))
 NODE_SIZE = {"start": (120, 56), "end": (120, 56), "decision": (150, 90), "feature": (180, 64), "flow": (180, 56), "note": (170, 70)}
 MAX_LOG = 300
@@ -193,6 +195,8 @@ def _card_fields(doc: dict, card: dict, f: dict) -> None:
         card["color"] = f["color"] if f["color"] in COLORS else "default"
     if "agent" in f:
         card["agent"] = _text(f["agent"], 40) or None
+    if "files" in f:  # files attached to the description (paths on the PC, like comment files)
+        card["files"] = [str(x).strip()[:1000] for x in (f["files"] or []) if str(x).strip()][:MAX_CARD_FILES]
     if "session" in f:  # the Hermes chat working on it: the phone's "Tell Hermes I replied" goes there
         card["session"] = _text(f["session"], 80) or None
 
@@ -632,6 +636,8 @@ def to_markdown(doc: dict, defaults: dict | None = None, global_instructions: st
             lines.append(f"- {c['title']}  `{c['id']}`" + (f"  ({', '.join(meta)})" if meta else ""))
             if c["body"].strip():
                 lines += ["  " + l for l in c["body"].strip().splitlines()[:12]]
+            if c.get("files"):
+                lines.append("  attached: " + ", ".join(c["files"]))
             lines += [f"  - [{'x' if i['done'] else ' '}] {i['text']}" for i in c["checklist"]]
             for m in (c.get("comments") or [])[-6:]:
                 state = "" if m["kind"] == "comment" else (" (resolved)" if m.get("resolved") else " (OPEN)")
@@ -775,6 +781,24 @@ class BlueprintStore:
             self._write(self._path(project_id), new)
             return new, applied
 
+    def upload(self, project_id: str, name: str, data: bytes) -> str:
+        """Store a file the phone attaches (card description or comment); returns its absolute path."""
+        self._path(project_id)  # validates the id
+        if len(data) > MAX_UPLOAD:
+            raise BlueprintError(f"File too large (max {MAX_UPLOAD // (1024 * 1024)} MB)")
+        d = self.root / "files" / project_id
+        d.mkdir(parents=True, exist_ok=True)
+        stem, ext = os.path.splitext(safe_name(name))
+        target = d / f"{stem}{ext}"
+        n = 1
+        while target.exists():
+            n += 1
+            target = d / f"{stem}-{n}{ext}"
+        tmp = target.with_name(f".tmp-{target.name}")
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+        return str(target)
+
     def trash(self, project_id: str) -> str:
         with self._lock():
             p = self._path(project_id)
@@ -836,10 +860,19 @@ def comment_file(doc: dict, path: str) -> str | None:
     if wanted is None:
         return None
     for c in doc["board"]["cards"]:
+        if any(real(f) == wanted for f in c.get("files") or []):
+            return wanted
         for m in c.get("comments") or []:
             if any(real(f) == wanted for f in m.get("files") or []):
                 return wanted
     return None
+
+
+def safe_name(name: str) -> str:
+    """A file name safe to store: no folders, no odd characters, never empty or hidden."""
+    base = os.path.basename(str(name or "").replace("\\", "/")).strip()
+    base = re.sub(r"[^A-Za-z0-9._ ()+-]", "_", base).strip(" .")[:120]
+    return base or "file"
 
 
 def hermes_projects(hermes_home: Path) -> list[dict]:
