@@ -43,6 +43,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -903,14 +908,16 @@ private fun BoardCard(card: BpCard, bp: Blueprint, dark: Boolean, ghost: Boolean
             val (done, total) = card.progress
             val meta = buildList {
                 if (total > 0) add("☑ $done/$total")
-                card.due?.let { add("⏰ $it") }
+                card.due?.let { add("⏰ " + (io.github.nideta231.hermesremote.data.Due.parse(it)?.label(java.time.LocalDate.now()) ?: it)) }
                 card.assignee?.let { add(if (it == "hermes") "✦ Hermes" else "● Me") }
                 if (card.comments.isNotEmpty()) add("💬 ${card.comments.size}")
                 if (card.files.isNotEmpty()) add("📎 ${card.files.size}")
                 card.node?.let { id -> bp.nodes.firstOrNull { it.id == id }?.let { add("◇ ${it.label}") } }
             }
+            val late = io.github.nideta231.hermesremote.data.Due.parse(card.due)?.overdue(java.time.LocalDateTime.now()) == true &&
+                card.column != bp.columns.lastOrNull()?.id
             if (meta.isNotEmpty()) Text(meta.joinToString("   "), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha), modifier = Modifier.padding(top = 6.dp))
+                color = (if (late) Bad else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = alpha), modifier = Modifier.padding(top = 6.dp))
         }
     }
 }
@@ -945,14 +952,11 @@ private fun CardSheet(card: BpCard, bp: Blueprint, actions: BlueprintActions, on
     var body by remember(card.id) { mutableStateOf(card.body) }
     var newItem by remember { mutableStateOf("") }
     var newTag by remember { mutableStateOf("") }
-    var due by remember(card.id) { mutableStateOf(card.due ?: "") }
     var confirmDelete by remember { mutableStateOf(false) }
     fun upd(vararg kv: Pair<String, Any?>) = actions.apply(arrayOf(BpOp.of("card.update", "id" to card.id, *kv))) {}
     fun saveText() {
         if (title.isNotBlank() && title.trim().length <= BpLimits.TITLE && title != card.title) upd("title" to title.trim())
         if (body != card.body) upd("body" to body)
-        val d = due.trim()
-        if (d != (card.due ?: "") && (d.isEmpty() || Regex("""\d{4}-\d{2}-\d{2}""").matches(d))) upd("due" to d.ifEmpty { null })
     }
     BackHandler { saveText(); onDismiss() }
     ModalBottomSheet(onDismissRequest = { saveText(); onDismiss() }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -998,8 +1002,7 @@ private fun CardSheet(card: BpCard, bp: Blueprint, actions: BlueprintActions, on
                     FilterChip(card.assignee == k, { upd("assignee" to k) }, { Text(t) }, colors = themedChip())
                 }
             }
-            OutlinedTextField(due, { due = it.take(10) }, label = { Text("Due date (YYYY-MM-DD)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                isError = due.isNotBlank() && !Regex("""\d{4}-\d{2}-\d{2}""").matches(due))
+            DuePicker(card.due) { upd("due" to it) }
             SectionLabel("Diagram node")
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(card.node == null, { upd("node" to null) }, { Text("None") }, colors = themedChip())
@@ -1090,6 +1093,54 @@ private fun CommentsSection(card: BpCard, bp: Blueprint, actions: BlueprintActio
         TextButton(onClick = onAskHermes) {
             Icon(Glyphs.Spark, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Tell Hermes I replied")
         }
+}
+
+/**
+ * Due date and optional time: one-tap Today / Tomorrow / Next week, a calendar, a time picker (or all day),
+ * and Clear. Shows the current value in words ("Tomorrow 17:00"), red once it is late. [set] gets the wire value or null.
+ */
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun DuePicker(value: String?, set: (String?) -> Unit) {
+    val due = io.github.nideta231.hermesremote.data.Due.parse(value)
+    val today = java.time.LocalDate.now()
+    var pickDate by remember { mutableStateOf(false) }
+    var pickTime by remember { mutableStateOf(false) }
+    SectionLabel("Due")
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        val late = due?.overdue(java.time.LocalDateTime.now()) == true
+        Text(due?.label(today) ?: value?.takeIf { it.isNotBlank() } ?: "No due date", Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge, fontWeight = if (due != null) FontWeight.Medium else null,
+            color = when { late -> Bad; due == null -> MaterialTheme.colorScheme.onSurfaceVariant; else -> MaterialTheme.colorScheme.onSurface })
+        if (late) Text("late", style = MaterialTheme.typography.labelSmall, color = Bad, modifier = Modifier.padding(end = 8.dp))
+        if (value != null) TextButton(onClick = { set(null) }) { Text("Clear") }
+    }
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        io.github.nideta231.hermesremote.data.Due.quick(today).forEach { (label, d) ->
+            FilterChip(due?.date == d, { set(io.github.nideta231.hermesremote.data.Due(d, due?.time).wire()) }, { Text(label) }, colors = themedChip())
+        }
+        FilterChip(false, { pickDate = true }, { Text("📅 Pick date") }, colors = themedChip())
+        FilterChip(due?.time != null, { if (due == null) set(io.github.nideta231.hermesremote.data.Due(today, java.time.LocalTime.of(17, 0)).wire()) else pickTime = true },
+            { Text(due?.time?.let { "🕒 %02d:%02d".format(it.hour, it.minute) } ?: "🕒 Add time") }, colors = themedChip())
+        if (due?.time != null) FilterChip(false, { set(due.copy(time = null).wire()) }, { Text("All day") }, colors = themedChip())
+    }
+    if (pickDate) {
+        val st = rememberDatePickerState(initialSelectedDateMillis = (due ?: io.github.nideta231.hermesremote.data.Due(today)).pickerMillis())
+        DatePickerDialog(onDismissRequest = { pickDate = false },
+            confirmButton = { TextButton(onClick = {
+                st.selectedDateMillis?.let { set(io.github.nideta231.hermesremote.data.Due(io.github.nideta231.hermesremote.data.Due.fromPickerMillis(it), due?.time).wire()) }
+                pickDate = false
+            }) { Text("OK") } },
+            dismissButton = { TextButton(onClick = { pickDate = false }) { Text("Cancel") } }) { DatePicker(st) }
+    }
+    if (pickTime && due != null) {
+        val st = rememberTimePickerState(initialHour = due.time?.hour ?: 17, initialMinute = due.time?.minute ?: 0,
+            is24Hour = android.text.format.DateFormat.is24HourFormat(androidx.compose.ui.platform.LocalContext.current))
+        AlertDialog(onDismissRequest = { pickTime = false }, title = { Text("Due time") },
+            text = { TimePicker(st) },
+            confirmButton = { TextButton(onClick = { set(due.copy(time = java.time.LocalTime.of(st.hour, st.minute)).wire()); pickTime = false }) { Text("OK") } },
+            dismissButton = { TextButton(onClick = { pickTime = false }) { Text("Cancel") } })
+    }
 }
 
 /** Hermes' one-tap answers to question [m] as buttons, plus its answer box when it asked for a typed answer. */

@@ -89,7 +89,9 @@ data class BpComment(val id: String, val at: Double, val by: String, val kind: S
                      /** One-tap answers Hermes offers on a question (each is a button). */
                      val options: List<String> = emptyList(),
                      /** Hermes wants a typed answer: the box's hint ("" = no hint), null = no box. */
-                     val input: String? = null) {
+                     val input: String? = null,
+                     /** Hermes noting an answer the user already gave (in the chat): never counts as unread. */
+                     val ack: Boolean = false) {
     val needsYou get() = (kind == "question" || kind == "review") && !resolved
 }
 
@@ -161,7 +163,7 @@ data class Blueprint(
                         it.optJSONArray("comments").objects().map { m ->
                             BpComment(m.optString("id"), m.optDouble("at", 0.0), m.optString("by"), m.optString("kind", "comment"),
                                 m.optString("text"), m.optBoolean("resolved"), m.optJSONArray("files").strings(), m.str("session"),
-                                m.optJSONArray("options").strings(), answerBoxHint(m.opt("input")))
+                                m.optJSONArray("options").strings(), answerBoxHint(m.opt("input")), m.optBoolean("ack"))
                         }, it.str("session"), it.optJSONArray("files").strings())
                 },
                 o.optJSONArray("log").objects().map { BpLog(it.optDouble("at", 0.0), it.optString("by"), it.optString("text")) },

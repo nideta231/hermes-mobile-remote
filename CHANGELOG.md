@@ -24,6 +24,13 @@ request number.
 - **One-tap answers**: when Hermes asks on a card it can offer answer buttons and/or a text box.
   Tap a button (or type and Send) and the answer goes on the card and straight to the chat that
   asked. Needs the updated bridge.
+- **Due date and time**: a card's due is picked with Today / Tomorrow / Next week, a calendar and
+  an optional time (or all day) instead of typing YYYY-MM-DD. Cards show it in words ("Tomorrow
+  17:00") and turn red once it is late. Needs the updated bridge for times.
+- The unread dot in the chat list now clears when you answered Hermes in the chat: Hermes' note of
+  your answer on the card no longer counts as a new comment. Needs the updated bridge.
+- Hermes keeps going on other boards while one board waits for your answer (new
+  `blueprint working` command lists every board's Working cards that can go on).
 
 ## v1.41.0
 

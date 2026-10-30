@@ -16,7 +16,7 @@ class BlueprintSeen(private val prefs: SharedPreferences) {
 
     /** The user looked at the card: everything on it up to now is read. */
     fun markSeen(projectId: String, card: BpCard) {
-        val newest = card.comments.filter { it.by != "phone" }.maxOfOrNull { it.at } ?: return
+        val newest = card.comments.filter { it.by != "phone" && !it.ack }.maxOfOrNull { it.at } ?: return
         if (newest > seenAt(projectId, card.id)) prefs.edit().putString(key(projectId, card.id), newest.toString()).apply()
     }
 
@@ -35,7 +35,7 @@ class BlueprintSeen(private val prefs: SharedPreferences) {
 /** The newest non-phone comment of a blueprint, from the bridge's summary (`latest_comment`). */
 data class BpLatestComment(val card: String, val title: String, val at: Double, val by: String, val kind: String, val text: String)
 
-internal fun unreadCount(card: BpCard, seenAt: Double): Int = card.comments.count { it.by != "phone" && it.at > seenAt }
+internal fun unreadCount(card: BpCard, seenAt: Double): Int = card.comments.count { it.by != "phone" && !it.ack && it.at > seenAt }
 
 /** Whether to alert about [latest]: something newer than the last alert, which the user has not already seen. */
 internal fun shouldNotify(latest: BpLatestComment?, notifiedAt: Double?, seenAt: Double): Boolean =
