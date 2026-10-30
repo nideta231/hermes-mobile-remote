@@ -17,12 +17,15 @@ Each Hermes project can have a **blueprint**: a flow diagram (Start, Feature, Fl
    - starting a card: `card start <card>` (moves it to Working, assigns you, and shows "Hermes is working on this" on the phone). Pausing without finishing: `card stop <card>`.
    - finishing a step: `card check <card> <item text>`
    - done (tested): `card done <card>` (last column; clears the working badge)
-   - need a decision or approval: `card ask <card> "<question>"`; want the user to check a result: `card review <card> "<what to check>" --file <path>`. Both highlight the card on the phone until answered; then STOP that card and continue with another. Make answering one tap: `card ask <card> "Deploy where?" --option Staging --option Live` shows buttons, `--input ["hint"]` adds a text box (both together work); the tapped answer lands on the card and arrives in your chat as "I answered your question on the card ...: \"Live\"". Plain notes: `card comment <card> "<text>" [--file <path>]`. Attach result files with `--file` (repeatable) so the user can open/download them from the card. After the user answers, `card resolve <card>` if it is still open. The user may answer in the chat instead of on the card (or the phone's Mark reviewed sends "I marked your review as reviewed on the card ..." to your chat): then `card resolve <card>` yourself and note the answer with `card comment`, so the card stops waiting. `card done` resolves anything still open.
+   - need a decision or approval: `card ask <card> "<question>"`; want the user to check a result: `card review <card> "<what to check>" --file <path>`. Both highlight the card on the phone until answered; then STOP that card and continue with another. Make answering one tap: `card ask <card> "Deploy where?" --option Staging --option Live` shows buttons, `--input ["hint"]` adds a text box (both together work); the tapped answer lands on the card and arrives in your chat as "I answered your question on the card ...: \"Live\"". Plain notes: `card comment <card> "<text>" [--file <path>]`. Attach result files with `--file` (repeatable) so the user can open/download them from the card. After the user answers, `card resolve <card>` if it is still open. The user may answer in the chat instead of on the card (or the phone's Mark reviewed sends "I marked your review as reviewed on the card ..." to your chat): then close it with ONE `card comment <card> "<the answer>" --resolves` (resolves the open asks and is not shown as a new unread comment, so the phone's badge clears), so the card stops waiting. `card done` resolves anything still open.
    - new work found: `card add -c Todo "<title>" --item ... --tag ...` (search first, no duplicates)
    - a new feature or flow: `node add --kind feature --after "<node>" "<label>"`, link its card with `--node`
    - log decisions worth remembering: `log "<one line>"`
 - A column over its card limit (`OVER THE LIMIT` in `md`): finish or move cards out of it before starting another card there.
 4. Cards and nodes can be named by id or by a unique part of the title. If a name is ambiguous the command lists the ids.
+
+## Waiting on one board, working on another
+A card parked on the user (`card ask`/`card review` + `card stop`) is not a reason to end the turn when the user asked you to work through boards ("continue the work", "settle them all", "every board"). Run `blueprint working`: it lists every board's Working cards that are not waiting for the user. Finish this board's Working column first, then go to the next board in that list: `blueprint md -p <id>`, follow THAT board's instructions (they differ per project, e.g. never touch LIVE), `card start` and work it the same way. Come back to a parked card when the user answers (the phone pings your chat). Only do this when the run is about boards in general; a run about ONE board or ONE card stays there.
 
 ## Control
 - `control: shared` (default): the user leads. Update status, checklists and add found work; do not reorganise columns, delete cards/nodes or rewrite the flow without asking.
@@ -33,12 +36,13 @@ Each Hermes project can have a **blueprint**: a flow diagram (Start, Feature, Fl
 B="hermes-remote-bridge blueprint"
 $B list                                  # blueprints, plus projects without one
 $B md --here                             # read (Markdown: flow, board, recent activity)
+$B working                               # every board's Working cards not waiting for the user (where to go next)
 $B show -p shop --json                   # full JSON (ids, coordinates)
 $B create -p "<project>"                 # new blueprint for a Hermes project (asks nothing)
 $B card add -p shop -c Todo "Login page" --tag auth --item "form" --item "API" --priority high --due 2026-11-30 --node Login
 $B card move -p shop login Working       # card by id or unique title part; column by name or id
 $B card check -p shop login form         # tick a checklist item (uncheck to undo)
-$B card edit -p shop login --body "..." --assignee hermes --priority medium
+$B card edit -p shop login --body "..." --assignee hermes --priority medium --due "2026-11-30 17:00"  # due: date or date + time
 $B card rm -p shop login                 # ask the user first
 $B card start login | card stop login | card done login
 $B card ask login "Use Stripe or PayPal?"            # highlighted until the user answers

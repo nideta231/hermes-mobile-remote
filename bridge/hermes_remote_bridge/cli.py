@@ -562,6 +562,18 @@ def cmd_blueprint(cfg: Config, args: argparse.Namespace) -> None:
                 print("\nProjects without a blueprint: " + ", ".join(f"{p['name']} ({p['id']})" for p in others))
             if not docs and not others:
                 print("No blueprints.")
+        elif a == "working":  # every board's Working cards that can go on now (not waiting for the user)
+            found = False
+            for d in store.all():
+                cards = bp.working_cards(d)
+                waiting = sum(1 for c in d["board"]["cards"] if bp.open_asks(c))
+                if cards:
+                    found = True
+                    print(f"{d['project']['id']}  {d['project']['name']}" + (f"  ({waiting} waiting for the user)" if waiting else ""))
+                    for c in cards:
+                        print(f"  - {c['title'][:100]}  `{c['id']}`" + (f"  ({c['agent']} working)" if c.get("agent") else ""))
+            if not found:
+                print("No Working cards to pick up on any board.")
         elif a in ("show", "md"):
             p = project()
             doc = need(p)
@@ -619,6 +631,8 @@ def cmd_blueprint(cfg: Config, args: argparse.Namespace) -> None:
                     extra["options"] = args.option
                 if args.input is not None:
                     extra["input"] = args.input or True
+                if args.resolves:
+                    extra["resolves"] = True
                 run([{"op": "card.comment", "id": rest[0], "kind": kind, "text": text(1), "files": files, **extra,
                       **({"session": os.environ["HERMES_SESSION_ID"]} if os.environ.get("HERMES_SESSION_ID") else {})}])
             elif sub == "resolve":
@@ -890,7 +904,7 @@ def main(argv: list[str] | None = None) -> None:
     doc = sub.add_parser("doctor", help="Check why the phone can't connect")
     doc.add_argument("--json", action="store_true", help="Machine-readable checks (for the tray app)")
     bpp = sub.add_parser("blueprint", help="Project blueprints (flow diagram + task board) for Hermes")
-    bpp.add_argument("action", choices=("list", "show", "md", "create", "trash", "restore", "card", "node", "column", "layout", "log", "control", "instructions", "settings", "op", "path"))
+    bpp.add_argument("action", choices=("list", "working", "show", "md", "create", "trash", "restore", "card", "node", "column", "layout", "log", "control", "instructions", "settings", "op", "path"))
     bpp.add_argument("args", nargs="*", help="Sub-action and its arguments (see the blueprint skill)")
     bpp.add_argument("-p", "--project", help="Project id, name or folder (default: the current folder's project)")
     bpp.add_argument("--here", action="store_true", help="Use the project that owns the current folder")
@@ -903,9 +917,11 @@ def main(argv: list[str] | None = None) -> None:
     bpp.add_argument("--option", action="append", help="card ask: a one-tap answer button on the phone (repeat, up to 6)")
     bpp.add_argument("--input", nargs="?", const="", default=None, metavar="HINT",
                      help="card ask: show a text answer box on the phone (optional hint text)")
+    bpp.add_argument("--resolves", action="store_true",
+                     help="card comment: note the user's answer (given in the chat) and resolve the card's open asks; no unread badge")
     bpp.add_argument("--agent", help="Name shown on a card while an agent works on it (card start/edit)")
     bpp.add_argument("--priority", choices=("low", "medium", "high", "none"))
-    bpp.add_argument("--due", help="YYYY-MM-DD or none")
+    bpp.add_argument("--due", help="YYYY-MM-DD, \"YYYY-MM-DD HH:MM\" or none")
     bpp.add_argument("--assignee", choices=("me", "hermes", "none"))
     bpp.add_argument("--node", help="Diagram node id/label to link a card to (or none)")
     bpp.add_argument("--kind", choices=("start", "end", "feature", "flow", "decision", "note"))

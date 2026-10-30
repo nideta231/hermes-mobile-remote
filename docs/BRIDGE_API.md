@@ -339,7 +339,8 @@ and connected automatically), `node.update`, `node.remove`, `edge.add`, `edge.up
 `card.update` (also `agent`: who is working on it now, cleared when the card reaches the last
 column), `card.check`, `card.move` (`column`, `index`), `card.remove`, `card.comment` (`text`,
 `kind` comment/question/review, `files` PC paths, `resolves` = also resolve open asks; on a question: `options` up to 6
-one-tap answers of max 80 chars, `input` true or a hint string = show a text answer box),
+one-tap answers of max 80 chars, `input` true or a hint string = show a text answer box; `resolves` on a Hermes `comment`
+marks it `ack`: a note of an answer the user gave in the chat, never counted as unread or in `latest_comment`),
 `comment.resolve` (`comment_id`, or every open ask; `resolved` false reopens; moving a card to the last column resolves its open asks), `comment.remove`,
 `instructions.set` (`text`: the user's standing rules, shown first in Hermes' Markdown view),
 `settings.set` (`new_cards` top/bottom: where cards added or moved into another column without an

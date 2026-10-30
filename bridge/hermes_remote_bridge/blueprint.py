@@ -55,7 +55,7 @@ MAX_LOG = 300
 MAX_TITLE, MAX_LABEL, MAX_COLUMN = 600, 400, 120
 MAX_TEXT = 20_000
 _PID = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
-_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$")  # a due date, optionally with a time
 
 
 class BlueprintError(ValueError):
@@ -184,9 +184,10 @@ def _card_fields(doc: dict, card: dict, f: dict) -> None:
             raise BlueprintError(f"priority must be one of low, medium, high or null")
         card["priority"] = f["priority"]
     if "due" in f:
-        if f["due"] not in (None, "") and not _DATE.match(str(f["due"])):
-            raise BlueprintError("due must be YYYY-MM-DD or null")
-        card["due"] = f["due"] or None
+        due = str(f["due"] or "").strip().replace("T", " ")[:16]
+        if due and not _DATE.match(due):
+            raise BlueprintError("due must be YYYY-MM-DD or YYYY-MM-DD HH:MM, or null")
+        card["due"] = due or None
     if "assignee" in f:
         if f["assignee"] not in ASSIGNEES:
             raise BlueprintError("assignee must be me, hermes or null")
@@ -483,9 +484,11 @@ def apply_op(doc: dict, op: dict, by: str = "phone") -> str | None:
             card["session"] = m["session"]
         card["comments"] = ((card.get("comments") or []) + [m])[-MAX_COMMENTS:]
         if op.get("resolves"):  # an answer closes what it answers
-            for q in open_asks(card):
-                if q is not m:
-                    q["resolved"] = True
+            closed = [q for q in open_asks(card) if q is not m]
+            for q in closed:
+                q["resolved"] = True
+            if by != "phone" and ck == "comment":  # Hermes noting an answer the user gave: nothing new to read
+                m["ack"] = True
         card["updated"] = time.time()
         op["comment_id"] = m["id"]
         word = {"comment": "Commented on", "question": "Asked about", "review": "Asked for a review of"}[ck]
@@ -575,9 +578,15 @@ def latest_comment(doc: dict) -> dict | None:
     best = None
     for c in doc["board"]["cards"]:
         for m in c.get("comments") or []:
-            if m.get("by") != "phone" and (best is None or m["at"] > best["at"]):
+            if m.get("by") != "phone" and not m.get("ack") and (best is None or m["at"] > best["at"]):
                 best = {"card": c["id"], "title": c["title"], "at": m["at"], "by": m["by"], "kind": m["kind"], "text": m["text"][:300]}
     return best
+
+
+def working_cards(doc: dict) -> list[dict]:
+    """Cards in this board's working column (Working / In progress / Doing) that are not waiting for the user."""
+    col = next((c["id"] for c in doc["board"]["columns"] if c["name"].strip().lower() in ("working", "working on", "in progress", "doing")), None)
+    return [c for c in sorted(doc["board"]["cards"], key=lambda c: c["order"]) if c["column"] == col and not open_asks(c)]
 
 
 def summary(doc: dict) -> dict:
@@ -612,7 +621,7 @@ def to_markdown(doc: dict, defaults: dict | None = None, global_instructions: st
         lines += [f"- {c['title']}  `{c['id']}`: {m['kind']} by {m['by']}: {m['text'][:200]}"
                   + (f" [options: {' | '.join(m['options'])}]" if m.get("options") else "")
                   + (" [text answer box]" if m.get("input") else "") for c, m in asks]
-        lines += ["Answered in the chat instead of on the card? Resolve it: `card resolve <card id>` (and note the answer with `card comment`).", ""]
+        lines += ["Answered in the chat instead of on the card? Resolve it: `card comment <card id> \"<the answer>\" --resolves` (closes the ask without a new unread badge).", ""]
     lines.append("## Flow")
     cards_by_node = {c["node"]: c for c in b["cards"] if c.get("node")}
     cols = {c["id"]: c["name"] for c in b["columns"]}

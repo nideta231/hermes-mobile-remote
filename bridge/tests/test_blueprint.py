@@ -117,7 +117,7 @@ def test_answered_in_chat_resolves_and_done_closes_open_asks(tmp_path):
     card = doc["board"]["cards"][0]
     assert card["comments"][0]["session"] == "sess1" and card["session"] == "sess1"
     # the md tells Hermes how to close an ask the user answered in the chat
-    assert "Answered in the chat instead of on the card? Resolve it: `card resolve" in bp.to_markdown(doc)
+    assert "Answered in the chat instead of on the card? Resolve it: `card comment <card id> \"<the answer>\" --resolves" in bp.to_markdown(doc)
     # moving the card to the last column answers whatever was still open
     doc, _ = s.apply("p1", [{"op": "card.move", "id": cid, "column": "Done"}], by="hermes")
     assert not bp.open_asks(doc["board"]["cards"][0]) and bp.summary(doc)["needs_you"] == 0
@@ -142,6 +142,29 @@ def test_question_offers_answer_buttons_and_text_box(tmp_path):
         s.apply("p1", [{"op": "card.comment", "id": cid, "kind": "question", "text": "x", "options": list("abcdefg")}])
     with pytest.raises(bp.BlueprintError):
         s.apply("p1", [{"op": "card.comment", "id": cid, "kind": "question", "text": "x", "options": ["y" * 81]}])
+
+
+def test_noting_a_chat_answer_does_not_badge_and_due_takes_a_time(tmp_path):
+    s = bp.BlueprintStore(tmp_path)
+    s.create("p1", "Shop")
+    doc, ap = s.apply("p1", [{"op": "card.add", "title": "Deploy", "column": "Working", "due": "2026-11-01T09:30"}])
+    cid = ap[0]["id"]
+    assert doc["board"]["cards"][0]["due"] == "2026-11-01 09:30"
+    for bad in ("2026-11-01 9:30", "tomorrow"):
+        with pytest.raises(bp.BlueprintError):
+            s.apply("p1", [{"op": "card.update", "id": cid, "due": bad}])
+    doc, _ = s.apply("p1", [{"op": "card.update", "id": cid, "due": "2026-11-02"}])
+    assert doc["board"]["cards"][0]["due"] == "2026-11-02" and "due 2026-11-02" in bp.to_markdown(doc)
+    doc, _ = s.apply("p1", [{"op": "card.comment", "id": cid, "kind": "review", "text": "Check it"}], by="hermes")
+    assert bp.working_cards(doc) == []  # waiting for the user: not one to pick up
+    seen = bp.latest_comment(doc)["at"]
+    doc, _ = s.apply("p1", [{"op": "card.comment", "id": cid, "text": "You approved it in the chat", "resolves": True}], by="hermes")
+    m = doc["board"]["cards"][0]["comments"][-1]
+    assert m["ack"] is True and not bp.open_asks(doc["board"]["cards"][0])
+    assert bp.latest_comment(doc)["at"] == seen  # the note is not a new unread comment
+    assert [c["id"] for c in bp.working_cards(doc)] == [cid]
+    doc, _ = s.apply("p1", [{"op": "card.comment", "id": cid, "text": "plain note"}], by="hermes")
+    assert "ack" not in doc["board"]["cards"][0]["comments"][-1]
 
 
 def test_agent_badge_clears_when_done_and_instructions_reach_hermes(tmp_path):
