@@ -338,7 +338,8 @@ and connected automatically), `node.update`, `node.remove`, `edge.add`, `edge.up
 `checklist`, `priority` low/medium/high, `due` YYYY-MM-DD, `assignee` me/hermes, `node`),
 `card.update` (also `agent`: who is working on it now, cleared when the card reaches the last
 column), `card.check`, `card.move` (`column`, `index`), `card.remove`, `card.comment` (`text`,
-`kind` comment/question/review, `files` PC paths, `resolves` = also resolve open asks),
+`kind` comment/question/review, `files` PC paths, `resolves` = also resolve open asks; on a question: `options` up to 6
+one-tap answers of max 80 chars, `input` true or a hint string = show a text answer box),
 `comment.resolve` (`comment_id`, or every open ask; `resolved` false reopens; moving a card to the last column resolves its open asks), `comment.remove`,
 `instructions.set` (`text`: the user's standing rules, shown first in Hermes' Markdown view),
 `settings.set` (`new_cards` top/bottom: where cards added or moved into another column without an

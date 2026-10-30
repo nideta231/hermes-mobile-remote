@@ -614,7 +614,12 @@ def cmd_blueprint(cfg: Config, args: argparse.Namespace) -> None:
                 missing = [f for f in files if not os.path.isfile(f)]
                 if missing:
                     raise bp.BlueprintError("No such file: " + ", ".join(missing))
-                run([{"op": "card.comment", "id": rest[0], "kind": kind, "text": text(1), "files": files,
+                extra = {}
+                if args.option:
+                    extra["options"] = args.option
+                if args.input is not None:
+                    extra["input"] = args.input or True
+                run([{"op": "card.comment", "id": rest[0], "kind": kind, "text": text(1), "files": files, **extra,
                       **({"session": os.environ["HERMES_SESSION_ID"]} if os.environ.get("HERMES_SESSION_ID") else {})}])
             elif sub == "resolve":
                 run([{"op": "comment.resolve", "id": rest[0], **({"comment_id": rest[1]} if len(rest) > 1 else {})}])
@@ -895,6 +900,9 @@ def main(argv: list[str] | None = None) -> None:
     bpp.add_argument("--tag", action="append")
     bpp.add_argument("--item", action="append", help="Checklist item (repeat)")
     bpp.add_argument("--file", action="append", help="Attach a PC file to a comment (repeat); the phone can open it")
+    bpp.add_argument("--option", action="append", help="card ask: a one-tap answer button on the phone (repeat, up to 6)")
+    bpp.add_argument("--input", nargs="?", const="", default=None, metavar="HINT",
+                     help="card ask: show a text answer box on the phone (optional hint text)")
     bpp.add_argument("--agent", help="Name shown on a card while an agent works on it (card start/edit)")
     bpp.add_argument("--priority", choices=("low", "medium", "high", "none"))
     bpp.add_argument("--due", help="YYYY-MM-DD or none")

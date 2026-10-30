@@ -17,7 +17,7 @@ Each Hermes project can have a **blueprint**: a flow diagram (Start, Feature, Fl
    - starting a card: `card start <card>` (moves it to Working, assigns you, and shows "Hermes is working on this" on the phone). Pausing without finishing: `card stop <card>`.
    - finishing a step: `card check <card> <item text>`
    - done (tested): `card done <card>` (last column; clears the working badge)
-   - need a decision or approval: `card ask <card> "<question>"`; want the user to check a result: `card review <card> "<what to check>" --file <path>`. Both highlight the card on the phone until answered; then STOP that card and continue with another. Plain notes: `card comment <card> "<text>" [--file <path>]`. Attach result files with `--file` (repeatable) so the user can open/download them from the card. After the user answers, `card resolve <card>` if it is still open. The user may answer in the chat instead of on the card (or the phone's Mark reviewed sends "I marked your review as reviewed on the card ..." to your chat): then `card resolve <card>` yourself and note the answer with `card comment`, so the card stops waiting. `card done` resolves anything still open.
+   - need a decision or approval: `card ask <card> "<question>"`; want the user to check a result: `card review <card> "<what to check>" --file <path>`. Both highlight the card on the phone until answered; then STOP that card and continue with another. Make answering one tap: `card ask <card> "Deploy where?" --option Staging --option Live` shows buttons, `--input ["hint"]` adds a text box (both together work); the tapped answer lands on the card and arrives in your chat as "I answered your question on the card ...: \"Live\"". Plain notes: `card comment <card> "<text>" [--file <path>]`. Attach result files with `--file` (repeatable) so the user can open/download them from the card. After the user answers, `card resolve <card>` if it is still open. The user may answer in the chat instead of on the card (or the phone's Mark reviewed sends "I marked your review as reviewed on the card ..." to your chat): then `card resolve <card>` yourself and note the answer with `card comment`, so the card stops waiting. `card done` resolves anything still open.
    - new work found: `card add -c Todo "<title>" --item ... --tag ...` (search first, no duplicates)
    - a new feature or flow: `node add --kind feature --after "<node>" "<label>"`, link its card with `--node`
    - log decisions worth remembering: `log "<one line>"`
@@ -42,6 +42,7 @@ $B card edit -p shop login --body "..." --assignee hermes --priority medium
 $B card rm -p shop login                 # ask the user first
 $B card start login | card stop login | card done login
 $B card ask login "Use Stripe or PayPal?"            # highlighted until the user answers
+$B card ask login "Which?" --option Stripe --option PayPal --input "or another"  # one-tap buttons + text box
 $B card review login "Check the export" --file out/report.csv
 $B card comment login "Pushed abc123" | card resolve login [<comment id>]
 $B instructions                          # print the user's rules for this project (set from the phone)

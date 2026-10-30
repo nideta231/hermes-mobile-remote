@@ -44,6 +44,8 @@ MAX_COMMENTS = 200
 # column) without an explicit position lands. aging_days: fade cards untouched that long (0 = off).
 SETTINGS = {"new_cards": ("bottom", "top"), "aging_days": (0, 3, 7, 14, 30), "sticky_add": (False, True)}
 MAX_COMMENT_FILES = 10
+MAX_OPTIONS = 6  # one-tap answers Hermes offers on a question
+MAX_OPTION = 80
 MAX_CARD_FILES = 30
 MAX_UPLOAD = 10 * 1024 * 1024  # one file the phone attaches to a card or comment (the app checks it before sending)
 DEFAULT_COLUMNS = (("docs", "Docs", "purple"), ("todo", "Todo", "blue"), ("working", "Working", "orange"), ("done", "Done", "green"))
@@ -467,6 +469,15 @@ def apply_op(doc: dict, op: dict, by: str = "phone") -> str | None:
         if not text and not files:
             raise BlueprintError("A comment needs text or a file")
         m = {"id": op.get("comment_id") or _id("m"), "at": time.time(), "by": by, "kind": ck, "text": text, "resolved": False, "files": files}
+        options = [_checked(o, MAX_OPTION, "An answer option") for o in (op.get("options") or []) if str(o).strip()]
+        if len(options) > MAX_OPTIONS:
+            raise BlueprintError(f"Up to {MAX_OPTIONS} answer options")
+        if (options or op.get("input")) and ck != "question":
+            raise BlueprintError("Answer options and an answer box go on a question (card ask)")
+        if options:  # the phone shows each as a button that answers in one tap
+            m["options"] = options
+        if op.get("input"):  # the phone shows a text box for the answer; a string is its hint
+            m["input"] = _text(op["input"], 120) if isinstance(op["input"], str) else True
         if _text(op.get("session"), 80):  # the Hermes chat that wrote it
             m["session"] = _text(op["session"], 80)
             card["session"] = m["session"]
@@ -598,7 +609,9 @@ def to_markdown(doc: dict, defaults: dict | None = None, global_instructions: st
     asks = [(c, m) for c in b["cards"] for m in open_asks(c)]
     if asks:
         lines += ["## Waiting for the user (open questions and reviews)"]
-        lines += [f"- {c['title']}  `{c['id']}`: {m['kind']} by {m['by']}: {m['text'][:200]}" for c, m in asks]
+        lines += [f"- {c['title']}  `{c['id']}`: {m['kind']} by {m['by']}: {m['text'][:200]}"
+                  + (f" [options: {' | '.join(m['options'])}]" if m.get("options") else "")
+                  + (" [text answer box]" if m.get("input") else "") for c, m in asks]
         lines += ["Answered in the chat instead of on the card? Resolve it: `card resolve <card id>` (and note the answer with `card comment`).", ""]
     lines.append("## Flow")
     cards_by_node = {c["node"]: c for c in b["cards"] if c.get("node")}

@@ -124,6 +124,26 @@ def test_answered_in_chat_resolves_and_done_closes_open_asks(tmp_path):
     assert "## Waiting for the user" not in bp.to_markdown(doc)
 
 
+def test_question_offers_answer_buttons_and_text_box(tmp_path):
+    s = bp.BlueprintStore(tmp_path)
+    s.create("p1", "Shop")
+    doc, ap = s.apply("p1", [{"op": "card.add", "title": "Deploy", "column": "Working"}])
+    cid = ap[0]["id"]
+    doc, ap = s.apply("p1", [{"op": "card.comment", "id": cid, "kind": "question", "text": "Where?",
+                              "options": ["Staging", " ", "Live"], "input": "or name a server"}], by="hermes")
+    m = doc["board"]["cards"][0]["comments"][0]
+    assert m["options"] == ["Staging", "Live"] and m["input"] == "or name a server"
+    assert "[options: Staging | Live] [text answer box]" in bp.to_markdown(doc)
+    doc, _ = s.apply("p1", [{"op": "card.comment", "id": cid, "kind": "question", "text": "Notes?", "input": True}], by="hermes")
+    assert doc["board"]["cards"][0]["comments"][1]["input"] is True and "options" not in doc["board"]["cards"][0]["comments"][1]
+    with pytest.raises(bp.BlueprintError):  # buttons only belong on a question
+        s.apply("p1", [{"op": "card.comment", "id": cid, "kind": "review", "text": "x", "options": ["ok"]}])
+    with pytest.raises(bp.BlueprintError):
+        s.apply("p1", [{"op": "card.comment", "id": cid, "kind": "question", "text": "x", "options": list("abcdefg")}])
+    with pytest.raises(bp.BlueprintError):
+        s.apply("p1", [{"op": "card.comment", "id": cid, "kind": "question", "text": "x", "options": ["y" * 81]}])
+
+
 def test_agent_badge_clears_when_done_and_instructions_reach_hermes(tmp_path):
     s = bp.BlueprintStore(tmp_path)
     s.create("p1", "Shop")
