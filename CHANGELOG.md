@@ -17,6 +17,13 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## v1.43.2
+
+- Fixed: over Tailscale Funnel, opening the PC page, Terminal, Notes, Scheduled or the PC bridge
+  page crashed the app instead of asking for your fingerprint or PIN (a missing permission). If the
+  fingerprint prompt can't start, the screen-lock screen is used instead, and a failed unlock now
+  shows a message instead of closing the app.
+
 ## v1.43.1
 
 - **Funnel: the real reason it wouldn't turn on, with a fix button.** A fresh tailnet has Serve

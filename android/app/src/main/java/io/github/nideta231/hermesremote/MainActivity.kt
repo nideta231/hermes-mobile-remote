@@ -150,19 +150,29 @@ class MainActivity : ComponentActivity() {
             else @Suppress("DEPRECATION") b.setDeviceCredentialAllowed(true)
             val signal = android.os.CancellationSignal()
             cont.invokeOnCancellation { signal.cancel() }
-            b.build().authenticate(signal, mainExecutor, object : android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
+            val prompt = try { b.build() } catch (t: Exception) { null }
+            if (prompt == null) { confirmWithLockScreen(title, subtitle, cont); return@suspendCancellableCoroutine }
+            try { prompt.authenticate(signal, mainExecutor, object : android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: android.hardware.biometrics.BiometricPrompt.AuthenticationResult?) {
                     if (cont.isActive) cont.resumeWith(Result.success(true))
                 }
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
                     if (cont.isActive) cont.resumeWith(Result.success(false))
                 }
-            })
-        } else {
-            @Suppress("DEPRECATION")
-            val intent = getSystemService(android.app.KeyguardManager::class.java)?.createConfirmDeviceCredentialIntent(title, subtitle)
-            if (intent == null) cont.resumeWith(Result.success(false)) else { confirmCont = cont; credentialConfirm.launch(intent) }
-        }
+            }) } catch (t: Exception) {
+                // e.g. SecurityException on a ROM that refuses the prompt: use the screen-lock screen instead.
+                android.util.Log.w("HermesFunnel", "biometric prompt refused: ${t.javaClass.simpleName}")
+                confirmWithLockScreen(title, subtitle, cont)
+            }
+        } else confirmWithLockScreen(title, subtitle, cont)
+    }
+
+    private fun confirmWithLockScreen(title: String, subtitle: String, cont: kotlinx.coroutines.CancellableContinuation<Boolean>) {
+        @Suppress("DEPRECATION")
+        val intent = getSystemService(android.app.KeyguardManager::class.java)?.createConfirmDeviceCredentialIntent(title, subtitle)
+        if (intent == null) { if (cont.isActive) cont.resumeWith(Result.success(false)); return }
+        confirmCont = cont
+        credentialConfirm.launch(intent)
     }
 
     /** Over Tailscale Funnel: challenge, fingerprint/PIN, then a 5 minute ticket. */
@@ -405,7 +415,17 @@ class MainActivity : ComponentActivity() {
         fun go(p: Page) {
             // Over the internet (Tailscale Funnel) these pages need the fingerprint/PIN unlock first.
             if (p in FUNNEL_LOCKED && vm.needsFunnelUnlock()) {
-                scope.launch { drawer.close(); if (unlockFunnel()) go(p) }
+                scope.launch {
+                    drawer.close()
+                    // Never let the unlock take the app down: any failure just leaves the page closed.
+                    val ok = try { unlockFunnel() } catch (t: Throwable) {
+                        if (t is kotlinx.coroutines.CancellationException) throw t
+                        android.util.Log.w("HermesFunnel", "unlock failed: ${t.javaClass.simpleName}")
+                        android.widget.Toast.makeText(this@MainActivity, "Couldn't unlock: ${t.message ?: t.javaClass.simpleName}", android.widget.Toast.LENGTH_LONG).show()
+                        false
+                    }
+                    if (ok) go(p)
+                }
                 return
             }
             page = p
