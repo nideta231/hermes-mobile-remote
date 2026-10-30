@@ -17,7 +17,7 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
-## Unreleased
+## v1.42.0
 
 - Blueprint boards: **Mark reviewed** / **Mark answered** no longer jumps to the chat. You stay on
   the board; a message says Hermes got it and will continue, with a **View chat** button.
