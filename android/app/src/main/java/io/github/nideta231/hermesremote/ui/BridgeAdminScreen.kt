@@ -144,7 +144,13 @@ fun BridgeAdminScreen(state: BridgeAdminState, actions: BridgeAdminActions, onBa
                     "the terminal, PC pages and notes ask for your fingerprint or PIN first (5 minutes); passwords (vault) never.") {
                 val fa = actions.funnel
                 Panel {
-                    if (!f.available && !f.on) PanelRow("Not available yet", f.reason, Glyphs.Alert, iconTint = Warn)
+                    if (!f.available && !f.on) {
+                        val open = androidx.compose.ui.platform.LocalUriHandler.current
+                        PanelRow("Not available yet", f.reason + if (f.enableUrl != null) " Tap Enable, sign in to Tailscale and approve, then come back and tap Check again." else "",
+                            Glyphs.Alert, iconTint = Warn) {
+                            f.enableUrl?.let { u -> TextButton(onClick = { open.openUri(u) }) { Text("Enable") } }
+                        }
+                    }
                     PanelRow("Funnel", if (f.on) "On: ${f.url}" else "Off: only home Wi-Fi and Tailscale reach this PC", Glyphs.Shield,
                         iconTint = if (f.on) Warn else MaterialTheme.colorScheme.onSurfaceVariant) {
                         if (state.busy == "funnel") TypingDots()

@@ -18,7 +18,9 @@ data class AdminDevice(val id: String, val name: String, val active: Boolean, va
 
 /** The PC's Tailscale Funnel: can it, is it on, at which address, and which phones may use it. */
 data class FunnelAdmin(val available: Boolean, val reason: String?, val on: Boolean, val url: String?,
-                       val ports: List<Int>, val devices: List<AdminDevice>)
+                       val ports: List<Int>, val devices: List<AdminDevice>,
+                       /** Tailscale's one-click page that enables Funnel for the tailnet (admin sign-in). */
+                       val enableUrl: String? = null)
 
 data class BridgeAdminState(
     val checks: List<DoctorCheck> = emptyList(),
@@ -216,4 +218,5 @@ internal fun parseFunnel(o: JSONObject) = FunnelAdmin(
     available = o.optBoolean("available"), reason = o.str("reason")?.takeIf { it.isNotBlank() },
     on = o.optBoolean("on"), url = o.str("url")?.takeIf { it.isNotBlank() },
     ports = o.optJSONArray("ports")?.let { a -> (0 until a.length()).map { a.optInt(it) } }.orEmpty().ifEmpty { listOf(443, 8443, 10000) },
-    devices = o.optJSONArray("devices").objects().map { AdminDevice(it.optString("id"), it.optString("name"), true, null, it.dbl("since"), it.optBoolean("this")) })
+    devices = o.optJSONArray("devices").objects().map { AdminDevice(it.optString("id"), it.optString("name"), true, null, it.dbl("since"), it.optBoolean("this")) },
+    enableUrl = o.str("enable_url")?.takeIf { it.startsWith("https://login.tailscale.com/") })

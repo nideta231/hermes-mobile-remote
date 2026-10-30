@@ -17,6 +17,13 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## v1.43.1
+
+- **Funnel: the real reason it wouldn't turn on, with a fix button.** A fresh tailnet has Serve
+  and Funnel switched off by Tailscale. The PC bridge page now says so and shows **Enable**, which
+  opens Tailscale's own approval page; approve, come back, tap Check again, then Turn on. Needs the
+  updated bridge.
+
 ## v1.43.0
 
 - Blueprint boards: the "Hermes got your review" message with **View chat** now shows inside an open

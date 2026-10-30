@@ -182,3 +182,13 @@ def test_why_unavailable_says_what_to_turn_on():
     assert "HTTPS Certificates" in fm.why_unavailable({**base, "CertDomains": None})
     assert "funnel" in fm.why_unavailable({**base, "Self": {"CapMap": {}}})
     assert "not running" in fm.why_unavailable({**base, "BackendState": "Stopped"})
+
+
+def test_feature_gate_gives_tailscales_enable_link():
+    reason, url = fm.feature_gate({"Text": "Funnel is not enabled on your tailnet.\nTo enable, visit:",
+                                   "URL": "https://login.tailscale.com/f/funnel?node=n1", "ShouldWait": True})
+    assert reason == "Funnel is not enabled on your tailnet." and url == "https://login.tailscale.com/f/funnel?node=n1"
+    assert fm.feature_gate({}) == (None, None)
+    assert fm.feature_gate({"Text": "x", "URL": "https://evil.example.com/f"})[1] is None  # never a foreign link
+    # once tailscaled says the feature is on, a lagging CertDomains / capability list doesn't block
+    assert fm.why_unavailable({"BackendState": "Running", "CertDomains": None, "Self": {"CapMap": {}}, "_gate_ok": True}) is None

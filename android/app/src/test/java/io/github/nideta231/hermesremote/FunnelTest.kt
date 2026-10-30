@@ -54,5 +54,9 @@ class FunnelTest {
         assertFalse(f.available); assertEquals("turn on HTTPS", f.reason); assertNull(f.url)
         assertEquals(listOf(443, 8443, 10000), f.ports)
         assertTrue(f.devices.single().isThis)
+        assertNull(f.enableUrl)
+        assertEquals("https://login.tailscale.com/f/funnel?node=n1",
+            parseFunnel(JSONObject("""{"enable_url": "https://login.tailscale.com/f/funnel?node=n1"}""")).enableUrl)
+        assertNull(parseFunnel(JSONObject("""{"enable_url": "https://evil.example.com/x"}""")).enableUrl)
     }
 }

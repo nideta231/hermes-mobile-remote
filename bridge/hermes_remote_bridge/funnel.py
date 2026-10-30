@@ -287,13 +287,28 @@ def why_unavailable(status: dict) -> str | None:
     caps = set((self_.get("CapMap") or {}).keys()) | set(self_.get("Capabilities") or [])
     if status.get("BackendState", "Running") != "Running":
         return "Tailscale is not running on the PC"
-    if not status.get("CertDomains"):
+    if not status.get("CertDomains") and not status.get("_gate_ok"):
         return ("HTTPS certificates are off for your tailnet: in the Tailscale admin console, DNS page, "
                 "enable MagicDNS and HTTPS Certificates")
-    if not any(c == "funnel" or c.endswith("/funnel") for c in caps):
+    if not status.get("_gate_ok") and not any(c == "funnel" or c.endswith("/funnel") for c in caps):
         return ("Funnel is not allowed for this PC: in the Tailscale admin console, Access controls, add the "
                 "\"funnel\" node attribute for it (Tailscale offers a one-click button when you first try)")
     return None
+
+
+def feature_gate(answer: dict | None) -> tuple[str | None, str | None]:
+    """(reason, enable link) from tailscaled's `query-feature` answer; (None, None) = allowed.
+
+    Tailscale answers with a one-click enable page when the tailnet has the feature off (admin only),
+    which is the real blocker on a fresh tailnet; the phone shows that link as a button.
+    """
+    if not answer or not (answer.get("Text") or answer.get("URL")):
+        return None, None
+    text = " ".join(str(answer.get("Text") or "").split()).removesuffix("To enable, visit:").strip()
+    url = str(answer.get("URL") or "") or None
+    if url and not url.startswith("https://login.tailscale.com/"):
+        url = None  # only ever hand the phone Tailscale's own page
+    return text or "Funnel is not enabled on your tailnet", url
 
 
 class ServeConfig:
@@ -310,18 +325,38 @@ class ServeConfig:
         return httpx.Client(transport=httpx.HTTPTransport(uds=self.socket_path), base_url="http://local-tailscaled.sock",
                             timeout=10.0, headers={"Sec-Tailscale": "localapi"})
 
+    _asked = False  # query-feature answered (newer tailscaled): it is the authority, not CertDomains
+
+    def _gate(self, c) -> tuple[str | None, str | None]:
+        """Ask tailscaled whether Serve and Funnel are enabled for the tailnet (newer tailscaled only)."""
+        self._asked = False
+        for feature in ("serve", "funnel"):
+            try:
+                r = c.post("/localapi/v0/query-feature", params={"feature": feature})
+            except Exception:  # noqa: BLE001
+                return None, None
+            if r.status_code != 200:
+                return None, None  # an older tailscaled: fall back to the status checks
+            reason, url = feature_gate(r.json())
+            if reason:
+                return reason, url
+        self._asked = True
+        return None, None
+
     def status(self, local_port: int) -> dict:
         with self._client() as c:
             st = c.get("/localapi/v0/status").raise_for_status().json()
             cfg = c.get("/localapi/v0/serve-config").raise_for_status().json()
-        return {"available": why_unavailable(st) is None, "reason": why_unavailable(st),
+            gate, enable_url = self._gate(c)
+        reason = gate or why_unavailable({**st, "_gate_ok": gate is None and enable_url is None and self._asked})
+        return {"available": reason is None, "reason": reason, "enable_url": enable_url,
                 "dns_name": (st.get("Self") or {}).get("DNSName", "").rstrip(".") or None,
                 "url": funnel_url(cfg, local_port), "on": funnel_url(cfg, local_port) is not None}
 
     def set(self, on: bool, local_port: int, public_port: int = 443) -> dict:
         with self._client() as c:
             st = c.get("/localapi/v0/status").raise_for_status().json()
-            if on and (reason := why_unavailable(st)):
+            if on and (reason := self._gate(c)[0] or why_unavailable({**st, "_gate_ok": self._asked})):
                 raise RuntimeError(reason)
             r = c.get("/localapi/v0/serve-config").raise_for_status()
             current, etag = r.json(), r.headers.get("etag", "")
