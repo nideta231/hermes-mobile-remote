@@ -16,6 +16,10 @@ data class DoctorCheck(val id: String, val level: String, val message: String, v
 data class AdminNetwork(val id: String, val name: String, val since: Double?)
 data class AdminDevice(val id: String, val name: String, val active: Boolean, val lastSeen: Double?, val createdAt: Double?, val isThis: Boolean)
 
+/** The PC's Tailscale Funnel: can it, is it on, at which address, and which phones may use it. */
+data class FunnelAdmin(val available: Boolean, val reason: String?, val on: Boolean, val url: String?,
+                       val ports: List<Int>, val devices: List<AdminDevice>)
+
 data class BridgeAdminState(
     val checks: List<DoctorCheck> = emptyList(),
     val version: String? = null,
@@ -28,6 +32,8 @@ data class BridgeAdminState(
     /** Hermes sockets the bridge holds for dropped phones; empty on a bridge without the route. */
     val parked: List<ParkedSocket> = emptyList(),
     val parkedSupported: Boolean = false,
+    /** null: the bridge has no Funnel support (older, or not Linux). */
+    val funnel: FunnelAdmin? = null,
     val loading: Boolean = false,
     /** A fix or restart in flight (its name). */
     val busy: String? = null,
@@ -48,6 +54,7 @@ class BridgeAdmin(
     private val onBridgeBack: () -> Unit,
     /** Whether the bridge lists `parked` in `/v1/me`; an old one has no such route. */
     private val supportsParked: () -> Boolean = { false },
+    private val supportsFunnel: () -> Boolean = { false },
 ) {
     private val _state = MutableStateFlow(BridgeAdminState())
     val state: StateFlow<BridgeAdminState> = _state.asStateFlow()
@@ -69,8 +76,38 @@ class BridgeAdmin(
                 val devs = c.adminDevices()
                 apply(doc); applyTrust(trust); applyDevices(devs)
                 loadParked(c)
+                loadFunnel(c)
                 _state.update { it.copy(loading = false) }
             } catch (t: Throwable) { fail(t) }
+        }
+    }
+
+    private suspend fun loadFunnel(c: BridgeClient) {
+        val f = if (!supportsFunnel()) null else runCatching { parseFunnel(c.adminFunnel()) }
+            .onFailure { if (it is CancellationException) throw it }.getOrNull()
+        _state.update { it.copy(funnel = f) }
+    }
+
+    /** Switch the PC's Funnel on (at [port]) or off. */
+    fun setFunnel(on: Boolean, port: Int = 443) {
+        val c = client() ?: return
+        _state.update { it.copy(busy = "funnel") }
+        scope.launch {
+            try {
+                c.adminFunnelSet(on, port)
+                _state.update { it.copy(busy = null) }
+                say(if (on) "Funnel is on: the PC answers on the internet for allowed phones" else "Funnel is off")
+                loadFunnel(c)
+            } catch (t: Throwable) { fail(t); say(describe(t)) }
+        }
+    }
+
+    /** Take another phone off the internet route. */
+    fun removeFunnel(name: String) {
+        val c = client() ?: return
+        scope.launch {
+            try { c.adminFunnelRemove(name); say("$name can no longer connect over the internet"); loadFunnel(c) }
+            catch (t: Throwable) { fail(t); say(describe(t)) }
         }
     }
 
@@ -174,3 +211,9 @@ class BridgeAdmin(
         }
     }
 }
+
+internal fun parseFunnel(o: JSONObject) = FunnelAdmin(
+    available = o.optBoolean("available"), reason = o.str("reason")?.takeIf { it.isNotBlank() },
+    on = o.optBoolean("on"), url = o.str("url")?.takeIf { it.isNotBlank() },
+    ports = o.optJSONArray("ports")?.let { a -> (0 until a.length()).map { a.optInt(it) } }.orEmpty().ifEmpty { listOf(443, 8443, 10000) },
+    devices = o.optJSONArray("devices").objects().map { AdminDevice(it.optString("id"), it.optString("name"), true, null, it.dbl("since"), it.optBoolean("this")) })

@@ -224,12 +224,13 @@ internal val LocalFileInfo = staticCompositionLocalOf<suspend (String) -> io.git
 }
 
 /** How the phone reaches the PC right now, reduced to what the top bar shows. */
-enum class LinkHealth { LAN, TAILNET, SEARCHING, OFFLINE }
+enum class LinkHealth { LAN, TAILNET, FUNNEL, SEARCHING, OFFLINE }
 
 fun linkHealth(conn: ConnectionState, unreachable: Boolean): LinkHealth = when {
     conn.searching -> LinkHealth.SEARCHING
     unreachable || conn.activeUrl == null -> LinkHealth.OFFLINE
     conn.transport == Transport.LAN -> LinkHealth.LAN
+    conn.transport == Transport.FUNNEL -> LinkHealth.FUNNEL
     else -> LinkHealth.TAILNET
 }
 
@@ -443,6 +444,7 @@ private fun LinkBadge(health: LinkHealth, onClick: () -> Unit) {
     val (icon, tint, desc) = when (health) {
         LinkHealth.LAN -> Triple(Glyphs.Wifi, Ok, "Local network")
         LinkHealth.TAILNET -> Triple(Glyphs.Globe, MaterialTheme.colorScheme.secondary, "Tailscale")
+        LinkHealth.FUNNEL -> Triple(Glyphs.Shield, Warn, "Internet (Tailscale Funnel)")
         LinkHealth.SEARCHING -> Triple(Glyphs.Refresh, Warn, "Connecting")
         LinkHealth.OFFLINE -> Triple(Glyphs.Offline, Bad, "Can't reach your PC")
     }

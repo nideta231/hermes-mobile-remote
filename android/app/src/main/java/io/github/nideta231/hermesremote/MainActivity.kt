@@ -116,6 +116,9 @@ import kotlinx.coroutines.withContext
 /** Chat is home; the others are pages pushed on top of it. */
 enum class Page { CHAT, SCHEDULED, PC, TERMINAL, VAULT, GRAPH, NOTES, BRIDGE, BLUEPRINT, SETTINGS }
 
+/** Pages that need the fingerprint/PIN unlock when the phone reaches the PC over Tailscale Funnel. */
+private val FUNNEL_LOCKED = setOf(Page.SCHEDULED, Page.PC, Page.TERMINAL, Page.VAULT, Page.NOTES, Page.BRIDGE)
+
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels()
     private val pairUri = mutableStateOf<String?>(null)
@@ -129,6 +132,45 @@ class MainActivity : ComponentActivity() {
         result.contents?.let { pairUri.value = it }
     }
     private val imageError = mutableStateOf<String?>(null)
+
+    /** Waiting for the screen-lock confirmation (Android 8-9, which has no BiometricPrompt with PIN). */
+    private var confirmCont: kotlinx.coroutines.CancellableContinuation<Boolean>? = null
+    private val credentialConfirm = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { r ->
+        confirmCont?.let { if (it.isActive) it.resumeWith(Result.success(r.resultCode == RESULT_OK)) }
+        confirmCont = null
+    }
+
+    /** Ask for the user's fingerprint or screen lock; true when confirmed. */
+    private suspend fun confirmUser(title: String, subtitle: String): Boolean = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val b = android.hardware.biometrics.BiometricPrompt.Builder(this).setTitle(title).setSubtitle(subtitle)
+            if (android.os.Build.VERSION.SDK_INT >= 30) b.setAllowedAuthenticators(
+                android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                    android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+            else @Suppress("DEPRECATION") b.setDeviceCredentialAllowed(true)
+            val signal = android.os.CancellationSignal()
+            cont.invokeOnCancellation { signal.cancel() }
+            b.build().authenticate(signal, mainExecutor, object : android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: android.hardware.biometrics.BiometricPrompt.AuthenticationResult?) {
+                    if (cont.isActive) cont.resumeWith(Result.success(true))
+                }
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
+                    if (cont.isActive) cont.resumeWith(Result.success(false))
+                }
+            })
+        } else {
+            @Suppress("DEPRECATION")
+            val intent = getSystemService(android.app.KeyguardManager::class.java)?.createConfirmDeviceCredentialIntent(title, subtitle)
+            if (intent == null) cont.resumeWith(Result.success(false)) else { confirmCont = cont; credentialConfirm.launch(intent) }
+        }
+    }
+
+    /** Over Tailscale Funnel: challenge, fingerprint/PIN, then a 5 minute ticket. */
+    private suspend fun unlockFunnel(): Boolean {
+        val nonce = vm.funnelChallenge() ?: return false
+        if (!confirmUser("Unlock over the internet", "Terminal, PC pages and notes need your fingerprint or PIN when you're away from home")) return false
+        return vm.funnelUnlock(nonce)
+    }
 
     // A picture of the pairing QR: a screenshot, or the PNG `pair --qr-png` wrote and a chat
     // app (Telegram) passed along. GetContent also offers Files/Drive, not just the gallery.
@@ -361,6 +403,11 @@ class MainActivity : ComponentActivity() {
         val health = linkHealth(conn, system.error != null)
 
         fun go(p: Page) {
+            // Over the internet (Tailscale Funnel) these pages need the fingerprint/PIN unlock first.
+            if (p in FUNNEL_LOCKED && vm.needsFunnelUnlock()) {
+                scope.launch { drawer.close(); if (unlockFunnel()) go(p) }
+                return
+            }
             page = p
             if (p == Page.SETTINGS) { vm.settings.refresh(); if ("blueprints" in features) vm.blueprints.refreshList() }
             scope.launch { drawer.close() }
@@ -503,7 +550,10 @@ class MainActivity : ComponentActivity() {
                         Page.BRIDGE -> BridgeAdminScreen(bridgeAdminState, BridgeAdminActions(refresh = vm.bridgeAdmin::refresh,
                             fix = vm.bridgeAdmin::fix, restart = vm.bridgeAdmin::restart, trust = vm.bridgeAdmin::trustCurrent,
                             untrust = vm.bridgeAdmin::untrust, revoke = vm.bridgeAdmin::revoke, loadLogs = vm.bridgeAdmin::loadLogs,
-                            update = if ("bridge_update" in features) BridgeUpdateActions(bridgeUpdateState, vm.bridgeUpdate::check, vm.bridgeUpdate::start, heldUpdate, vm.bridgeAdmin::refresh) else null),
+                            update = if ("bridge_update" in features) BridgeUpdateActions(bridgeUpdateState, vm.bridgeUpdate::check, vm.bridgeUpdate::start, heldUpdate, vm.bridgeAdmin::refresh) else null,
+                            funnel = if ("funnel" in features) io.github.nideta231.hermesremote.ui.FunnelActions(set = vm.bridgeAdmin::setFunnel,
+                                remove = vm.bridgeAdmin::removeFunnel, allowThis = vm::allowFunnel, leaveThis = vm::leaveFunnel,
+                                overFunnel = conn.transport == io.github.nideta231.hermesremote.data.Transport.FUNNEL) else null),
                             onBack = { page = Page.CHAT })
                         Page.NOTES -> NotesScreen(notesState, NotesActions(watch = vm.notes::watch, unwatch = vm.notes::stop,
                             setQuery = vm.notes::setQuery, setLabel = vm.notes::setLabel, setArchived = vm.notes::setArchived,

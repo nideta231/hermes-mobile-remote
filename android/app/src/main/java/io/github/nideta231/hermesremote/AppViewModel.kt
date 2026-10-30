@@ -210,6 +210,9 @@ data class ConnectionState(
     val liveError: String? = null,
     /** "via Bridge" or "via Gateway" for a linked PC; null for any other host. */
     val via: String? = null,
+    /** The PC's public Tailscale Funnel address (null: Funnel off) and whether this phone may use it. */
+    val funnelUrl: String? = null,
+    val funnelAllowed: Boolean = false,
 )
 
 class AppViewModel(private val app: Application) : AndroidViewModel(app) {
@@ -530,7 +533,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     val bridgeAdmin = io.github.nideta231.hermesremote.data.BridgeAdmin(viewModelScope, client = { client },
         describe = ::describe, say = { _toast.value = it }, onBridgeBack = ::bridgeBack,
-        supportsParked = { "parked" in _features.value })
+        supportsParked = { "parked" in _features.value }, supportsFunnel = { "funnel" in _features.value })
 
     /** After a bridge restart: reopen the live socket at once (no backoff wait) and reload everything it serves. */
     private fun bridgeBack() {
@@ -642,6 +645,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                     // On Tailscale: re-ask the bridge which LAN addresses it serves now (the PC may
                     // have rejoined a trusted network); discoverEndpoints then moves us to the LAN.
                     if (_conn.value.transport == Transport.TAILNET) discoverEndpoints()
+                    if (_conn.value.transport == Transport.FUNNEL) preferDirectIfBack()
                     continue
                 }
                 if (!c.reachable() && !c.reachable()) reconnect()
@@ -900,6 +904,14 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             val features = me.optJSONArray("features").strings().toSet()
             _features.value = features
             store.bridgeFeatures = features
+            me.optJSONObject("device")?.str("id")?.let { store.deviceId = it }
+            me.optJSONObject("funnel")?.let { f ->
+                val url = f.str("url")?.takeIf { it.isNotBlank() }
+                store.funnelUrl = url
+                _conn.update { it.copy(funnelUrl = url, funnelAllowed = f.optBoolean("allowed")) }
+                // Removed on the PC (bridge page, or another phone): drop the key here too.
+                if (!f.optBoolean("allowed") && _pairing.value?.funnelKey != null && _conn.value.transport != Transport.FUNNEL) forgetFunnel()
+            }
             if ("bridge_update" in features) bridgeUpdate.check(false)
             if ("blueprints" in features) { blueprints.refreshList(); blueprints.watch() }
             if (me.optInt("protocol", 0) < MIN_BRIDGE_PROTOCOL) {
@@ -932,12 +944,87 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         if (BridgeClient(p.copy(url = lan.url)).reachable()) switchTo(null)
     }
 
+    /** On the internet route while home Wi-Fi or Tailscale answers again: move to the direct one. */
+    private suspend fun preferDirectIfBack() {
+        val p = _pairing.value ?: return
+        val direct = EndpointResolver.resolve(p.url, bridgeAddresses, TransportMode.AUTO).filter { it.transport != Transport.LAN || p.pin != null }
+        if (direct.any { BridgeClient(p.copy(url = it.url)).reachable() }) switchTo(null)
+    }
+
+    // ------------------------------------------------------------ Tailscale Funnel
+
+    private fun funnelAlias() = io.github.nideta231.hermesremote.data.FunnelKeys.alias(profiles.activeId)
+
+    /** Allow this phone over the internet: a hardware key (fingerprint/PIN to use) + the bridge's Funnel key. */
+    fun allowFunnel() {
+        val c = client ?: return
+        if (_conn.value.transport == Transport.FUNNEL) { _toast.value = "Allow this phone from home Wi-Fi or Tailscale"; return }
+        viewModelScope.launch {
+            try {
+                val pub = withContext(Dispatchers.IO) { io.github.nideta231.hermesremote.data.FunnelKeys.publicKey(funnelAlias()) }
+                val r = c.funnelEnroll(pub)
+                val key = r.getString("key")
+                _pairing.update { it?.copy(funnelKey = key) }
+                _pairing.value?.let { store.save(it) }
+                r.str("url")?.takeIf { it.isNotBlank() }?.let { store.funnelUrl = it }
+                _conn.update { it.copy(funnelAllowed = true, funnelUrl = r.str("url") ?: it.funnelUrl) }
+                _toast.value = "This phone can now reach the PC over the internet"
+                bridgeAdmin.refresh()
+            } catch (t: java.security.GeneralSecurityException) {
+                _toast.value = "Set a screen lock (PIN, pattern or fingerprint) on this phone first"
+            } catch (t: Throwable) { say(t) }
+        }
+    }
+
+    /** Stop using the internet route on this phone (the bridge forgets its key, the phone its own). */
+    fun leaveFunnel() {
+        val c = client ?: return
+        viewModelScope.launch {
+            try { c.funnelLeave() } catch (t: Throwable) { if (t is CancellationException) throw t }
+            forgetFunnel()
+            _toast.value = "This phone no longer uses the internet route"
+            bridgeAdmin.refresh()
+        }
+    }
+
+    private fun forgetFunnel() {
+        io.github.nideta231.hermesremote.data.FunnelKeys.delete(funnelAlias())
+        io.github.nideta231.hermesremote.data.FunnelTicket.clear()
+        _pairing.update { it?.copy(funnelKey = null) }
+        _pairing.value?.let { store.save(it) }
+        _conn.update { it.copy(funnelAllowed = false) }
+    }
+
+    /** Whether a page needs the fingerprint/PIN unlock first (on the internet route without a live ticket). */
+    fun needsFunnelUnlock(): Boolean = _conn.value.transport == Transport.FUNNEL && !io.github.nideta231.hermesremote.data.FunnelTicket.valid()
+
+    /** Step 1 of the unlock: the bridge's challenge (null and a toast when it fails). */
+    suspend fun funnelChallenge(): String? = try {
+        client?.funnelChallenge()?.str("nonce")
+    } catch (t: Throwable) { if (t is CancellationException) throw t; _toast.value = describe(t); null }
+
+    /** Step 2, right after the user confirmed fingerprint/PIN: sign the challenge and get the 5 minute ticket. */
+    suspend fun funnelUnlock(nonce: String): Boolean = try {
+        val c = client ?: throw IOException("Not connected to your PC")
+        val id = store.deviceId ?: c.me().optJSONObject("device")?.str("id")?.also { store.deviceId = it } ?: throw IOException("Unknown device")
+        val sig = withContext(Dispatchers.IO) { io.github.nideta231.hermesremote.data.FunnelKeys.sign(funnelAlias(), io.github.nideta231.hermesremote.data.Funnel.unlockMessage(nonce, id)) }
+        val r = c.funnelUnlock(nonce, sig)
+        io.github.nideta231.hermesremote.data.FunnelTicket.set(r.getString("ticket"), r.optInt("expires_in", 300))
+        _toast.value = "Unlocked for 5 minutes"
+        true
+    } catch (t: Throwable) {
+        if (t is CancellationException) throw t
+        _toast.value = if (t is android.security.keystore.UserNotAuthenticatedException) "The unlock timed out; try again" else describe(t)
+        false
+    }
+
     /** Manual override: try only this transport, and remember the choice. */
     fun useTransport(transport: Transport) {
         _pairing.value ?: return
         val mode = when (transport) {
             Transport.LAN -> TransportMode.LAN
             Transport.TAILNET -> TransportMode.TAILNET
+            Transport.FUNNEL -> TransportMode.AUTO  // the internet route is only ever the last fallback
         }
         _conn.update { it.copy(mode = mode) }
         store.transportMode = mode.name.lowercase()
@@ -1004,6 +1091,19 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                 }
             }
             if (tryAll(known.filter { it.transport == Transport.TAILNET })) return@launch
+            // Neither home Wi-Fi nor Tailscale: the internet (Tailscale Funnel), when the user allowed this phone.
+            // Never saved as the pairing's address, so the next start still tries the direct routes first.
+            if (force == null && mode == TransportMode.AUTO && p.funnelKey != null) {
+                Endpoint.funnel(store.funnelUrl)?.let { ep ->
+                    val candidate = p.copy(url = ep.url)
+                    if (BridgeClient(candidate).probe() == BridgeClient.Probe.OK) {
+                        _conn.update { it.copy(activeUrl = ep.url, transport = Transport.FUNNEL, searching = false) }
+                        useClient(BridgeClient(candidate))
+                        refreshProfiles(); refreshSessions(); settings.refresh(); cron.refresh(); discoverEndpoints()
+                        return@launch
+                    }
+                }
+            }
             _conn.update { it.copy(searching = false) }
             last?.let { say(it) }
         }
@@ -1027,6 +1127,9 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             "unauthorized" -> "This device was revoked or the token is wrong. Pair again."
             "forbidden_peer" -> "Bridge refused this Tailscale identity."
             "forbidden_network" -> "The PC doesn't serve this network. On a network you trust, run `hermes-remote-bridge trust` on the PC."
+            "funnel_locked" -> "Over the internet this needs your fingerprint or PIN: open it again to unlock."
+            "funnel_not_allowed" -> "This phone isn't allowed over the internet. Allow it on the PC bridge page from home or Tailscale."
+            "locked_out" -> "Too many failed attempts from this network. Try again in 15 minutes."
             "hermes_unavailable" -> "Hermes isn't running on the PC."
             else -> t.message ?: t.code
         }
@@ -1164,6 +1267,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         client = null
         source = null
         bridgeAddresses = null
+        io.github.nideta231.hermesremote.data.FunnelTicket.clear()
         _pairing.value = null
         _gatewayHost.value = null
         _chat.value = ChatState()

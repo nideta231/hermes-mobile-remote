@@ -124,3 +124,20 @@ Stated plainly, because a security document that only lists wins is not useful.
 ## Reporting a vulnerability
 
 See [SECURITY.md](../SECURITY.md).
+
+## Tailscale Funnel (internet access)
+
+Off until the user turns it on from the phone (PC bridge page) and allows each phone separately.
+
+- Funnel and Serve proxy to the bridge's loopback listener. The guard never treats them as local:
+  a request with `Tailscale-Funnel-Request: ?1` (set by tailscaled, which strips client copies) is
+  internet traffic; one with `Tailscale-User-Login` / `X-Forwarded-Host` is Serve and needs an
+  allowed tailnet login.
+- Over Funnel a request needs the device token AND that phone's Funnel key (`X-Funnel-Key`, a second
+  secret issued only from the LAN/tailnet, stored hashed in `funnel.json`).
+- Open over Funnel: identity, status, chat list, media, blueprints, the live socket. Everything else
+  (terminal, admin, monitor, notes, cron, settings, folders...) needs an unlock ticket
+  (`X-Funnel-Unlock`, 5 minutes) bought by signing a one-use challenge with an EC P-256 Keystore key
+  that only signs after fingerprint/screen lock. `/v1/local/*`, enrolling and `/metrics` are refused.
+- On the live socket over Funnel the vault methods and `config.set yolo` are refused.
+- 10 bad tokens/keys from one internet address in 10 minutes lock it out for 15; every refusal is audited.

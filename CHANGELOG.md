@@ -23,6 +23,15 @@ request number.
   card too (it was hidden behind the card sheet).
 - Blueprint cards: swiping down to scroll back to the top of a long card no longer closes it. Swipe
   down from the top to close.
+- **Reach your PC from anywhere without Tailscale on the phone (Tailscale Funnel)**: PC bridge page >
+  Internet (Tailscale Funnel) > Turn on, then Allow this phone (do both from home Wi-Fi or
+  Tailscale). Only phones you allow get in, each with its own extra key. Chat, files and boards
+  work as usual; the terminal, PC pages and notes ask for your fingerprint or PIN first (good for
+  5 minutes); the password vault and turning approvals off never work over the internet. Too many
+  wrong keys from one address lock it out for 15 minutes, and every internet request is logged.
+  The app uses it only when home Wi-Fi and Tailscale both fail, and moves back as soon as one
+  answers. Needs the updated bridge (Linux), and Funnel allowed for the PC in your Tailscale admin
+  console (the page says exactly what to turn on).
 
 ## v1.42.0
 

@@ -411,3 +411,18 @@ The desktop app manages the bridge through these routes. They are not for the ph
   asked to type a password.
 | GET / PUT | `/v1/monitor/tracking` | which monitor groups the PC reads (`cpu`, `memory`, `temp`, `disk`, `network`, `processes`, `claude`); PUT `{"network": false}` stops reading it (saved in `monitor-tracking.json` next to the database). `stats.tracking` in `/v1/monitor/now` mirrors it |
 - **Two trust prompts on Linux.** Until the bridge's own `notify-send` trust prompt is removed, a Linux desktop can show two "Trust this network?" prompts: one from the desktop app and one from the bridge.
+
+## Tailscale Funnel (feature `funnel`)
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/v1/funnel/enroll` | `{public_key}` (EC P-256 SPKI, base64) → `{key, url}`; LAN/tailnet only |
+| DELETE | `/v1/funnel/enroll` | this phone stops using Funnel |
+| GET | `/v1/funnel/challenge` | `{nonce, expires_in}` (one use, 120 s) |
+| POST | `/v1/funnel/unlock` | `{nonce, signature}` (ECDSA over `hermes-remote-funnel-unlock:<nonce>:<device id>`) → `{ticket, expires_in}` |
+| GET | `/v1/admin/funnel` | `{available, reason, on, url, ports, devices}` |
+| POST | `/v1/admin/funnel` | `{on, port}` (443/8443/10000) edits tailscaled's serve config; switching on is refused over Funnel |
+| POST | `/v1/admin/funnel/remove` | `{name}` takes a phone off Funnel |
+
+Over Funnel send `X-Funnel-Key` on every request and `X-Funnel-Unlock` for locked routes. `/v1/me` adds
+`via: "funnel"` and `funnel: {url, allowed}`.

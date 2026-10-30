@@ -1222,6 +1222,7 @@ private fun ConnectionPanel(conn: ConnectionState, error: String?, actions: Sett
             conn.searching -> Triple(Glyphs.Refresh, Warn, "Connecting…")
             error != null || conn.activeUrl == null -> Triple(Glyphs.Offline, Bad, "Can't reach your PC")
             conn.transport == Transport.LAN -> Triple(Glyphs.Wifi, Ok, "Local network")
+            conn.transport == Transport.FUNNEL -> Triple(Glyphs.Shield, Warn, "Internet (Tailscale Funnel)")
             else -> Triple(Glyphs.Globe, MaterialTheme.colorScheme.secondary, "Tailscale")
         }
         val sub = when {
@@ -1231,6 +1232,7 @@ private fun ConnectionPanel(conn: ConnectionState, error: String?, actions: Sett
                 "Your PC is on “${conn.pcNetwork}”, which isn't trusted, so it only answers over Tailscale."
             conn.transport == Transport.LAN -> "Direct and encrypted, verified as your PC"
             conn.transport == Transport.TAILNET -> "Through your tailnet"
+            conn.transport == Transport.FUNNEL -> "Over the public internet. Terminal, PC pages and notes ask for your fingerprint or PIN; the vault stays off."
             else -> null
         }
         PanelRow(title, listOfNotNull(sub, conn.via).joinToString(" · ").ifEmpty { null }, icon, iconTint = tint) { if (conn.searching) TypingDots(Warn) }

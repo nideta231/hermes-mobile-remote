@@ -7,7 +7,7 @@ package io.github.nideta231.hermesremote.data
  * address it answers on, so the app can try them in order rather than being pinned to whichever
  * one was in the pairing QR code — being at home should not depend on a VPN being up.
  */
-enum class Transport { LAN, TAILNET;
+enum class Transport { LAN, TAILNET, FUNNEL;
     companion object {
         /** Whether a request carrying the device token may go to this host. */
         fun allowsToken(host: String, https: Boolean, pinned: Boolean): Boolean = when {
@@ -24,13 +24,24 @@ enum class TransportMode { AUTO, LAN, TAILNET }
 data class Endpoint(val transport: Transport, val host: String, val port: Int) {
     // java.net.URI.host keeps the brackets on an IPv6 literal, so they must not be doubled here.
     // LAN is HTTPS (pinned certificate), Tailscale plain HTTP inside WireGuard.
-    val url: String get() = "${if (transport == Transport.LAN) "https" else "http"}://${if (host.contains(':')) "[$host]" else host}:$port"
+    val url: String get() = if (transport == Transport.FUNNEL) "https://$host" + (if (port == 443) "" else ":$port")
+        else "${if (transport == Transport.LAN) "https" else "http"}://${if (host.contains(':')) "[$host]" else host}:$port"
 
     val label: String
         get() = when (transport) {
             Transport.LAN -> "Local network ($host)"
             Transport.TAILNET -> "Tailscale ($host)"
+            Transport.FUNNEL -> "Internet ($host)"
         }
+
+    companion object {
+        /** The Funnel endpoint for the bridge's advertised public [url], or null when it isn't one. */
+        fun funnel(url: String?): Endpoint? {
+            if (url == null || !Funnel.isFunnelUrl(url)) return null
+            val u = java.net.URI(url.trim())
+            return Endpoint(Transport.FUNNEL, u.host, if (u.port > 0) u.port else 443)
+        }
+    }
 }
 
 /**
@@ -66,6 +77,7 @@ object EndpointResolver {
         fun group(t: Transport) = when (t) {
             Transport.LAN -> (if (pairedTransport == t) listOf(pairedHost) else emptyList()) + lan
             Transport.TAILNET -> (if (pairedTransport == t) listOf(pairedHost) else emptyList()) + tailnet
+            Transport.FUNNEL -> emptyList()  // never resolved here: only tried last, by the app, when allowed
         }
 
         val only = force ?: when (mode) {

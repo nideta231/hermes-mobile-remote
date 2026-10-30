@@ -42,6 +42,17 @@ class BridgeAdminActions(
     val loadLogs: () -> Unit,
     /** The bridge self-update row (null when the bridge can't update itself). */
     val update: BridgeUpdateActions? = null,
+    /** Tailscale Funnel controls (null when the bridge has none). */
+    val funnel: FunnelActions? = null,
+)
+
+class FunnelActions(
+    val set: (on: Boolean, port: Int) -> Unit,
+    val remove: (String) -> Unit,
+    val allowThis: () -> Unit,
+    val leaveThis: () -> Unit,
+    /** True while the app itself is on the internet route (allowing and switching on are home/Tailscale only). */
+    val overFunnel: Boolean,
 )
 
 private fun fixLabel(fix: String) = when (fix) {
@@ -68,6 +79,7 @@ fun BridgeAdminScreen(state: BridgeAdminState, actions: BridgeAdminActions, onBa
     val heldUpdate = ParkedSockets.confirmText(state.parked, state.parkedSupported, HeldAction.Update)
     var revoke by remember { mutableStateOf<String?>(null) }
     var logs by remember { mutableStateOf(false) }
+    var funnelOn by remember { mutableStateOf(false) }
     PageScaffold("PC bridge", onBack) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -123,6 +135,45 @@ fun BridgeAdminScreen(state: BridgeAdminState, actions: BridgeAdminActions, onBa
                             else if (s.available && s.canUpdate) TextButton(onClick = { if (heldWork != null) confirmUpdate = true else u.start() }) { Text(if (s.restartNeeded) "Restart" else "Update") }
                         }
                     }
+                }
+            }
+
+            val f = state.funnel
+            if (f != null && actions.funnel != null) SettingsSection("Internet (Tailscale Funnel)",
+                "Reach this PC from anywhere without Tailscale on the phone. Only phones you allow get in: chat, files and boards; " +
+                    "the terminal, PC pages and notes ask for your fingerprint or PIN first (5 minutes); passwords (vault) never.") {
+                val fa = actions.funnel
+                Panel {
+                    if (!f.available && !f.on) PanelRow("Not available yet", f.reason, Glyphs.Alert, iconTint = Warn)
+                    PanelRow("Funnel", if (f.on) "On: ${f.url}" else "Off: only home Wi-Fi and Tailscale reach this PC", Glyphs.Shield,
+                        iconTint = if (f.on) Warn else MaterialTheme.colorScheme.onSurfaceVariant) {
+                        if (state.busy == "funnel") TypingDots()
+                        else if (f.on) TextButton(onClick = { fa.set(false, 443) }) { Text("Turn off") }
+                        else if (f.available && !fa.overFunnel) TextButton(onClick = { funnelOn = true }) { Text("Turn on") }
+                    }
+                    val me = f.devices.firstOrNull { it.isThis }
+                    PanelRow("This phone", if (me != null) "Allowed over the internet" else "Not allowed", Glyphs.Person) {
+                        if (me != null) TextButton(onClick = fa.leaveThis) { Text("Remove", color = Bad) }
+                        else if (!fa.overFunnel) TextButton(onClick = fa.allowThis) { Text("Allow") }
+                    }
+                    f.devices.filter { !it.isThis }.forEach { d ->
+                        PanelRow(d.name, "Allowed over the internet", Glyphs.Person) { TextButton(onClick = { fa.remove(d.name) }) { Text("Remove", color = Bad) } }
+                    }
+                }
+                if (funnelOn) {
+                    var port by remember { mutableStateOf(f.ports.firstOrNull() ?: 443) }
+                    AlertDialog(onDismissRequest = { funnelOn = false }, title = { Text("Put this PC on the internet?") },
+                        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Anyone can reach the address, but only phones you allow get past the door: each needs its pairing, " +
+                                "its own internet key, and your fingerprint or PIN for the terminal and PC pages. Wrong keys lock the sender out. " +
+                                "Allow this phone below once Funnel is on.")
+                            Text("Public port", style = MaterialTheme.typography.labelMedium)
+                            androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                f.ports.forEach { p -> androidx.compose.material3.FilterChip(port == p, { port = p }, { Text(p.toString()) }, colors = themedChip()) }
+                            }
+                        } },
+                        confirmButton = { TextButton(onClick = { funnelOn = false; fa.set(true, port) }) { Text("Turn on") } },
+                        dismissButton = { TextButton(onClick = { funnelOn = false }) { Text("Cancel") } })
                 }
             }
 

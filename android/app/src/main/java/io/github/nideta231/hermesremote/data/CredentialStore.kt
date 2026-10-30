@@ -19,7 +19,8 @@ class CredentialStore(context: Context, file: String = "pairing") {
         return try {
             val raw = Base64.decode(blob, Base64.NO_WRAP)
             val token = String(cipher.decrypt(raw), Charsets.UTF_8)
-            Pairing(url, prefs.getString("device", "") ?: "", token, pin = prefs.getString("pin", null))
+            val funnel = prefs.getString("funnel_key", null)?.let { String(cipher.decrypt(Base64.decode(it, Base64.NO_WRAP)), Charsets.UTF_8) }
+            Pairing(url, prefs.getString("device", "") ?: "", token, pin = prefs.getString("pin", null), funnelKey = funnel)
         } catch (e: Exception) {
             clear() // key invalidated (e.g. restored to a new phone): force re-pairing
             null
@@ -33,6 +34,7 @@ class CredentialStore(context: Context, file: String = "pairing") {
             .putString("device", p.device)
             .putString("pin", p.pin)
             .putString("token", Base64.encodeToString(blob, Base64.NO_WRAP))
+            .putString("funnel_key", p.funnelKey?.let { Base64.encodeToString(cipher.encrypt(it.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP) })
             .apply()
     }
 
@@ -57,6 +59,16 @@ class CredentialStore(context: Context, file: String = "pairing") {
     var bridgeFeatures: Set<String>
         get() = prefs.getStringSet("bridge_features", null)?.toSet().orEmpty()
         set(v) = prefs.edit().putStringSet("bridge_features", v).apply()
+
+    /** The PC's public Tailscale Funnel address (https://pc.<tailnet>.ts.net), when it has one. */
+    var funnelUrl: String?
+        get() = prefs.getString("funnel_url", null)
+        set(v) = prefs.edit().putString("funnel_url", v).apply()
+
+    /** This phone's device id on the bridge (from /v1/me); the Funnel unlock signs it. */
+    var deviceId: String?
+        get() = prefs.getString("device_id", null)
+        set(v) = prefs.edit().putString("device_id", v).apply()
 
     /** Manual network choice: "auto", "lan" or "tailnet". */
     var transportMode: String

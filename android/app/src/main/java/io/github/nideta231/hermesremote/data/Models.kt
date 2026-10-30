@@ -11,6 +11,8 @@ data class Pairing(
     val alternates: List<String> = emptyList(),
     /** SHA-256 of the bridge's TLS certificate (pairing code v2). Required for the LAN. */
     val pin: String? = null,
+    /** This phone's Funnel key: set once the user allowed it over the internet (Tailscale Funnel). */
+    val funnelKey: String? = null,
 )
 
 /** One row of the desktop sidebar: the same list, from the same query. [id] is the stored id. */

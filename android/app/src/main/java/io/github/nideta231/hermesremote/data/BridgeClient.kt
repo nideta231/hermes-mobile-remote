@@ -39,7 +39,8 @@ class BridgeClient(
         .apply {
             // LAN: HTTPS pinned to the bridge's own certificate (hostname is irrelevant; the pin
             // is the identity). Tailscale: plain HTTP inside WireGuard.
-            pairing.pin?.let { pin ->
+            // Funnel: Tailscale's public certificate, checked the normal way (the pin is the PC's own, LAN only).
+            pairing.pin?.takeIf { !Funnel.isFunnelUrl(pairing.url) }?.let { pin ->
                 val tm = CertPin.trustManager(pin)
                 sslSocketFactory(CertPin.socketFactory(tm), tm)
                 hostnameVerifier { _, _ -> true }
@@ -51,7 +52,13 @@ class BridgeClient(
             // pinned TLS. Never in clear text across a Wi-Fi.
             if (!hostGuard(req.url.host, req.url.isHttps))
                 throw IOException("Refusing to send credentials to ${req.url.host} without a verified connection")
-            chain.proceed(req.newBuilder().header("Authorization", "Bearer ${pairing.token}").build())
+            val out = req.newBuilder().header("Authorization", "Bearer ${pairing.token}")
+            // Over the internet the bridge also wants this phone's Funnel key, and an unlock ticket for locked pages.
+            if (Funnel.isFunnelUrl(base)) {
+                pairing.funnelKey?.let { out.header(Funnel.KEY_HEADER, it) }
+                FunnelTicket.current()?.let { out.header(Funnel.UNLOCK_HEADER, it) }
+            }
+            chain.proceed(out.build())
         }
         .build()
 
@@ -132,6 +139,16 @@ class BridgeClient(
     suspend fun adminDevices() = call("GET", "/v1/admin/devices")
     suspend fun adminRevoke(name: String) = call("POST", "/v1/admin/revoke", body = JSONObject().put("name", name))
     suspend fun adminParked() = call("GET", "/v1/admin/parked")
+    suspend fun adminFunnel() = call("GET", "/v1/admin/funnel", readTimeoutS = 20)
+    suspend fun adminFunnelSet(on: Boolean, port: Int) = call("POST", "/v1/admin/funnel", body = JSONObject().put("on", on).put("port", port), readTimeoutS = 30)
+    suspend fun adminFunnelRemove(name: String) = call("POST", "/v1/admin/funnel/remove", body = JSONObject().put("name", name))
+
+    /** Tailscale Funnel: allow this phone (from home/Tailscale only), leave, and the 5 minute unlock. */
+    suspend fun funnelEnroll(publicKey: String) = call("POST", "/v1/funnel/enroll", body = JSONObject().put("public_key", publicKey))
+    suspend fun funnelLeave() = call("DELETE", "/v1/funnel/enroll")
+    suspend fun funnelChallenge() = call("GET", "/v1/funnel/challenge")
+    suspend fun funnelUnlock(nonce: String, signature: String) = call("POST", "/v1/funnel/unlock",
+        body = JSONObject().put("nonce", nonce).put("signature", signature))
     suspend fun adminLogs(lines: Int = 200) = call("GET", "/v1/admin/logs", mapOf("lines" to lines), readTimeoutS = 20)
 
     /** The bridge's release and the newest one (`/v1/bridge/update`). */
