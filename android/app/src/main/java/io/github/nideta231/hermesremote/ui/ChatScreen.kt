@@ -213,7 +213,7 @@ class ChatActions(
 private val LocalEditMessage = staticCompositionLocalOf<((ChatItem.User, String) -> Unit)?> { null }
 
 /** Loads a chat image's bytes; provided once by [ChatScreen] so every bubble can draw pictures. */
-private val LocalImageLoader = staticCompositionLocalOf<suspend (String) -> ByteArray?> { { null } }
+internal val LocalImageLoader = staticCompositionLocalOf<suspend (String) -> ByteArray?> { { null } }
 
 /** Downloads a chat file from the PC; provided once by [ChatScreen] so every bubble can show file cards. */
 internal val LocalFileFetcher = staticCompositionLocalOf<suspend (String) -> java.io.File> { { throw java.io.IOException("Not available") } }
@@ -1593,6 +1593,43 @@ private fun FileCard(path: String) {
                 androidx.compose.material3.CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Gold)
             } else IconButton(onClick = { save() }) { Icon(Glyphs.Download, "Save $name", modifier = Modifier.size(18.dp)) }
         }
+    }
+}
+
+/** Board attachments with a preview: pictures as thumbnails (tap opens them full screen with Info and
+ *  Download), text files' first lines under their file card, anything else as a plain file card. */
+@Composable
+internal fun AttachmentPreviews(paths: List<String>, modifier: Modifier = Modifier) {
+    if (io.github.nideta231.hermesremote.data.HostFeature.CHAT_FILE_DOWNLOAD in LocalHiddenFeatures.current) return
+    val kind = io.github.nideta231.hermesremote.data.FileAttachments::previewOf
+    val pics = paths.filter { kind(it) == io.github.nideta231.hermesremote.data.FileAttachments.Preview.PICTURE }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (pics.isNotEmpty()) ImageStrip(pics)
+        (paths - pics.toSet()).forEach { p ->
+            FileCard(p)
+            if (kind(p) == io.github.nideta231.hermesremote.data.FileAttachments.Preview.TEXT) TextPeek(p)
+        }
+    }
+}
+
+/** The first lines of a text attachment, fetched from the PC once (the file stays cached). */
+@Composable
+private fun TextPeek(path: String) {
+    val fetch = LocalFileFetcher.current
+    val peek by produceState<String?>(null, path) {
+        value = runCatching {
+            val f = fetch(path)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val bytes = f.inputStream().use { input -> ByteArray(4096).let { b -> b.copyOf(input.read(b).coerceAtLeast(0)) } }
+                io.github.nideta231.hermesremote.data.FileAttachments.textPeek(String(bytes, Charsets.UTF_8))
+            }
+        }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
+    }
+    val text = peek?.takeIf { it.isNotBlank() } ?: return
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.widthIn(max = 300.dp)) {
+        Text(text, style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp))
     }
 }
 

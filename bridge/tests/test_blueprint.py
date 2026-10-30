@@ -230,6 +230,13 @@ def test_routes(tmp_path):
     up2 = c.post("/v1/blueprints/p1/upload?name=shot%20one.png", content=b"x", headers=h).json()
     assert up2["name"] == "shot one-2.png"
     assert "attached: " in bp.to_markdown(bp.BlueprintStore(cfg.blueprints_dir).get("p1"))
+    # Up to MAX_UPLOAD passes the bridge's small body cap; over it is refused with the size and the limit
+    big = c.post("/v1/blueprints/p1/upload?name=clip.mp4", content=b"x" * (2 * 1024 * 1024), headers=h)
+    assert big.status_code == 200 and big.json()["size"] == 2 * 1024 * 1024
+    over = c.post("/v1/blueprints/p1/upload?name=clip.mp4", content=b"x" * (bp.MAX_UPLOAD + 1), headers=h)
+    assert over.status_code == 413 and "up to 10 MB" in over.json()["error"]["message"]
+    assert "clip.mp4 is 10.0 MB" in over.json()["error"]["message"]
+    assert c.post("/v1/notes", content=b"x" * (2 * 1024 * 1024), headers=h).status_code == 413  # others keep the cap
 
 
 def test_comment_files_are_the_only_files_served(tmp_path):

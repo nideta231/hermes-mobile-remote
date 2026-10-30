@@ -45,7 +45,7 @@ MAX_COMMENTS = 200
 SETTINGS = {"new_cards": ("bottom", "top"), "aging_days": (0, 3, 7, 14, 30), "sticky_add": (False, True)}
 MAX_COMMENT_FILES = 10
 MAX_CARD_FILES = 30
-MAX_UPLOAD = 50 * 1024 * 1024  # one file the phone attaches to a card or comment
+MAX_UPLOAD = 10 * 1024 * 1024  # one file the phone attaches to a card or comment (the app checks it before sending)
 DEFAULT_COLUMNS = (("docs", "Docs", "purple"), ("todo", "Todo", "blue"), ("working", "Working", "orange"), ("done", "Done", "green"))
 NODE_SIZE = {"start": (120, 56), "end": (120, 56), "decision": (150, 90), "feature": (180, 64), "flow": (180, 56), "note": (170, 70)}
 MAX_LOG = 300
@@ -651,6 +651,11 @@ def to_markdown(doc: dict, defaults: dict | None = None, global_instructions: st
 
 # ------------------------------------------------------------------ storage
 
+def too_large_message(name: str, size: int) -> str:
+    """What the phone shows when an attachment is over [MAX_UPLOAD]: the file's size and the limit."""
+    return f"{safe_name(name)} is {size / (1024 * 1024):.1f} MB; board attachments can be up to {MAX_UPLOAD // (1024 * 1024)} MB"
+
+
 class BlueprintStore:
     def __init__(self, root: Path):
         self.root = Path(root).expanduser()
@@ -785,7 +790,7 @@ class BlueprintStore:
         """Store a file the phone attaches (card description or comment); returns its absolute path."""
         self._path(project_id)  # validates the id
         if len(data) > MAX_UPLOAD:
-            raise BlueprintError(f"File too large (max {MAX_UPLOAD // (1024 * 1024)} MB)")
+            raise BlueprintError(too_large_message(name, len(data)))
         d = self.root / "files" / project_id
         d.mkdir(parents=True, exist_ok=True)
         stem, ext = os.path.splitext(safe_name(name))

@@ -40,6 +40,7 @@ from .devices import Device, DeviceStore
 from . import local_secret
 from . import selfupdate
 from . import notes as notes_mod
+from . import blueprint as bp_mod
 from .local_api import devices_doc, pairing_payload, pairing_uri, qr_png, trust_doc
 from .network import TrustStore, current_network, network_info, serving_lan_ips
 from .chat_files import referenced_file
@@ -66,6 +67,8 @@ MEDIA_MAX_BYTES = 25 * 1024 * 1024
 CHAT_FILE_MAX_BYTES = 100 * 1024 * 1024
 # The wire contract between this bridge and the app. 2 = the WebSocket relay (v1.0.0).
 PROTOCOL = 2
+# Board attachments from the phone: larger than max_body_bytes, capped by blueprint.MAX_UPLOAD instead.
+_UPLOAD_PATH = re.compile(r"/v1/blueprints/[^/]+/upload")
 # Sent by a local client (the desktop app) on every `/v1/local/*` request.
 LOCAL_HEADER = "X-Hermes-Local"
 
@@ -346,8 +349,12 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
             if length is None and request.headers.get("transfer-encoding"):
                 return counted(request, start, _err(411, "length_required", "Chunked request bodies are not accepted"),
                                "refused")
-            if length is not None and (not length.isdigit() or int(length) > cfg.max_body_bytes):
-                return counted(request, start, _err(413, "body_too_large", "Request body too large"), "refused")
+            # A board attachment has its own, larger cap (checked by the upload route with a clear message).
+            cap = bp_mod.MAX_UPLOAD if _UPLOAD_PATH.fullmatch(request.url.path) else cfg.max_body_bytes
+            if length is not None and (not length.isdigit() or int(length) > cap):
+                msg = (bp_mod.too_large_message(request.query_params.get("name") or "The file", int(length))
+                       if cap == bp_mod.MAX_UPLOAD and length.isdigit() else "Request body too large")
+                return counted(request, start, _err(413, "body_too_large", msg), "refused")
         try:
             response = counted(request, start, await call_next(request))
         except Exception:
@@ -509,8 +516,6 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
     # ------------------------------------------------------------ Project blueprints
     # A flow diagram + task board per Hermes project, JSON files Hermes edits through the CLI. Every
     # change is a batch of ops applied to the newest copy under a lock, so phone and Hermes merge.
-    from . import blueprint as bp_mod
-
     bp_store = bp_mod.BlueprintStore(cfg.blueprints_dir)
 
     def _bp_on() -> None:
@@ -595,8 +600,9 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
         which the phone then puts in a card.update `files` or card.comment `files` op."""
         _bp_on()
         await asyncio.to_thread(_bp, pid)
-        if int(request.headers.get("content-length") or 0) > bp_mod.MAX_UPLOAD:
-            raise ApiError(413, "too_large", f"File too large (max {bp_mod.MAX_UPLOAD // (1024 * 1024)} MB)")
+        size = int(request.headers.get("content-length") or 0)
+        if size > bp_mod.MAX_UPLOAD:
+            raise ApiError(413, "too_large", bp_mod.too_large_message(name, size))
         data = await request.body()
         try:
             path = await asyncio.to_thread(bp_store.upload, pid, name, data)

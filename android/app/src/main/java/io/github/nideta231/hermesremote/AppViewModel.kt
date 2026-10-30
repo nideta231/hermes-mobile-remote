@@ -425,7 +425,10 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     /** A file picked on the phone, sent to the PC for the open blueprint; null (and a toast) when it fails. */
     suspend fun uploadBlueprintFile(uri: String): String? = try {
-        val (bytes, name) = io.github.nideta231.hermesremote.data.FileAttachments.read(app, uri)
+        val files = io.github.nideta231.hermesremote.data.FileAttachments
+        // Refuse a file over the limit before reading it, with its size, instead of a vague error after the upload.
+        files.boardLimitError(files.name(app, uri), files.size(app, uri))?.let { throw java.io.IOException(it) }
+        val (bytes, name) = files.read(app, uri)
         blueprints.upload(bytes, name).also { _toast.value = "Attached $name" }
     } catch (t: Throwable) {
         if (t is kotlinx.coroutines.CancellationException) throw t

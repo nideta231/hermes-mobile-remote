@@ -222,7 +222,9 @@ fun BlueprintScreen(projectId: String, projectName: String, state: BlueprintStat
             listOf("Diagram", "Board", "Activity").forEachIndexed { i, t -> Tab(tab == i, { tab = i }, text = { Text(t) }) }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            androidx.compose.runtime.CompositionLocalProvider(LocalFileFetcher provides actions.fetchFile, LocalFileInfo provides actions.fileInfo) {
+            androidx.compose.runtime.CompositionLocalProvider(LocalFileFetcher provides actions.fetchFile, LocalFileInfo provides actions.fileInfo,
+                LocalImageLoader provides { p: String -> runCatching { val f = actions.fetchFile(p)
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { f.readBytes() } }.getOrNull() }) {
             when {
                 bp == null && state.error != null -> Text(state.error, color = Bad, modifier = Modifier.padding(24.dp))
                 bp == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { TypingDots(Gold) }
@@ -1047,7 +1049,7 @@ private fun CommentsSection(card: BpCard, bp: Blueprint, actions: BlueprintActio
                     Text(fmt.format(java.util.Date((m.at * 1000).toLong())), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if (m.text.isNotBlank()) Text(m.text, style = MaterialTheme.typography.bodyMedium)
-                if (m.files.isNotEmpty()) FileCards(m.files, Modifier.padding(top = 2.dp))
+                if (m.files.isNotEmpty()) AttachmentPreviews(m.files, Modifier.padding(top = 2.dp))
                 if (m.kind != "comment") Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { actions.apply(arrayOf(BpOp.of("comment.resolve", "id" to card.id, "comment_id" to m.id, "resolved" to !m.resolved))) {} }) {
                         Text(if (m.resolved) "Reopen" else if (m.kind == "review") "Mark reviewed" else "Mark answered")
@@ -1279,12 +1281,15 @@ private fun DescriptionEditor(body: String, onChange: (String) -> Unit) {
 private fun CardFiles(files: List<String>, actions: BlueprintActions, onChange: (List<String>) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         SectionLabel("Attachments" + if (files.isNotEmpty()) "  ${files.size}" else "")
+        Spacer(Modifier.width(8.dp))
+        Text("up to ${io.github.nideta231.hermesremote.data.FileAttachments.MAX_BYTES / (1024 * 1024)} MB per file",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.weight(1f))
         AttachButton(actions, "Attach file or picture", label = "Attach") { onChange((files + it).distinct()) }
     }
     files.forEach { f ->
         Row(verticalAlignment = Alignment.CenterVertically) {
-            FileCards(listOf(f), Modifier.weight(1f))
+            AttachmentPreviews(listOf(f), Modifier.weight(1f))
             IconButton(onClick = { onChange(files - f) }) { Icon(Glyphs.Close, "Remove attachment", Modifier.size(16.dp)) }
         }
     }

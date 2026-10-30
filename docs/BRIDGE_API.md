@@ -128,7 +128,7 @@ body size) as `refused`.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `bridge_info` | gauge | `version`, `protocol` | Always 1. |
+| `bridge_info` | gauge | `version`, `protocol` | Always 1. `version` (also `bridge_version` in `/v1/me` and `/v1/status`) is the release tag the bridge runs, without the `v` (`dev` outside a release checkout). |
 | `process_start_time_seconds` | gauge | | Bridge start, Unix time. |
 | `bridge_paired_devices` | gauge | | Paired devices not revoked. |
 | `bridge_live_devices` | gauge | | Distinct devices with a live socket open now. |
@@ -328,7 +328,7 @@ same files through `hermes-remote-bridge blueprint ...` (skill `project-blueprin
 | DELETE | `/v1/blueprints/{project}` | move to the trash → `{trashed: id}` |
 | POST | `/v1/blueprints-trash/{id}/restore` | restore |
 | DELETE | `/v1/blueprints-trash/{id}` | delete for good |
-| POST | `/v1/blueprints/{pid}/upload?name=` | raw body (max 50 MB): a file the phone attaches; stored under `blueprints_dir/files/<pid>/` with a safe, unique name. `{path, name, size}`; put `path` in a card's `files` (`card.update`) or a comment's `files` to make it servable |
+| POST | `/v1/blueprints/{pid}/upload?name=` | raw body (max 10 MB, refused with 413 and a message naming the file size and the limit): a file the phone attaches; stored under `blueprints_dir/files/<pid>/` with a safe, unique name. `{path, name, size}`; put `path` in a card's `files` (`card.update`) or a comment's `files` to make it servable |
 | PUT | `/v1/blueprints-settings` | global board settings (`new_cards`, `aging_days`, `sticky_add`; `default` clears one) and global agent `instructions` (text; empty clears); boards without their own choice follow them. `GET /v1/blueprints` and every blueprint carry them as `defaults` and `default_instructions` |
 
 Ops are applied to the newest copy under a file lock, so phone and Hermes edits merge:
