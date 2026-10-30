@@ -108,6 +108,22 @@ def test_comments_questions_and_resolving(tmp_path):
     assert len(doc["board"]["cards"][0]["comments"]) == 1
 
 
+def test_answered_in_chat_resolves_and_done_closes_open_asks(tmp_path):
+    s = bp.BlueprintStore(tmp_path)
+    s.create("p1", "Shop")
+    doc, ap = s.apply("p1", [{"op": "card.add", "title": "Deploy", "column": "Working"}])
+    cid = ap[0]["id"]
+    doc, ap = s.apply("p1", [{"op": "card.comment", "id": cid, "kind": "review", "text": "Check it", "session": "sess1"}], by="hermes")
+    card = doc["board"]["cards"][0]
+    assert card["comments"][0]["session"] == "sess1" and card["session"] == "sess1"
+    # the md tells Hermes how to close an ask the user answered in the chat
+    assert "Answered in the chat instead of on the card? Resolve it: `card resolve" in bp.to_markdown(doc)
+    # moving the card to the last column answers whatever was still open
+    doc, _ = s.apply("p1", [{"op": "card.move", "id": cid, "column": "Done"}], by="hermes")
+    assert not bp.open_asks(doc["board"]["cards"][0]) and bp.summary(doc)["needs_you"] == 0
+    assert "## Waiting for the user" not in bp.to_markdown(doc)
+
+
 def test_agent_badge_clears_when_done_and_instructions_reach_hermes(tmp_path):
     s = bp.BlueprintStore(tmp_path)
     s.create("p1", "Shop")

@@ -30,4 +30,22 @@ class BlueprintCommentsTest {
         assertTrue(bp.cards[1].openAsks.isEmpty())  // a resolved review no longer waits
         assertEquals(listOf("c1"), bp.needsYou.map { it.id })
     }
+
+    @Test fun resolvingOnThePhonePingsTheChatThatAsked() {
+        val d = JSONObject("""{"project": {"id": "p1", "name": "Shop"}, "version": 1,
+          "board": {"columns": [{"id": "w", "name": "Working"}], "cards": [
+            {"id": "c1", "column": "w", "title": "Deploy", "session": "card-chat", "comments": [
+              {"id": "m1", "at": 1.0, "by": "hermes", "kind": "review", "text": "Check the export\nmore", "session": "ask-chat"},
+              {"id": "m2", "at": 2.0, "by": "hermes", "kind": "question", "text": "Live?"}]}]}}""")
+        val bp = Blueprint.parse(d)
+        val card = bp.cards[0]
+        val (review, question) = card.comments
+        assertEquals("ask-chat", review.session)
+        assertEquals("ask-chat", io.github.nideta231.hermesremote.data.resolvedPingChat(card, review))
+        assertEquals("card-chat", io.github.nideta231.hermesremote.data.resolvedPingChat(card, question))  // older comment: the card's chat
+        assertNull(io.github.nideta231.hermesremote.data.resolvedPingChat(card.copy(session = null), question))
+        val text = io.github.nideta231.hermesremote.data.resolvedPingText(bp, card, review)
+        assertTrue(text, text.startsWith("I marked your review as reviewed on the card \"Deploy\" in the Shop blueprint (\"Check the export\")"))
+        assertTrue(io.github.nideta231.hermesremote.data.resolvedPingText(bp, card, question).startsWith("I marked your question as answered"))
+    }
 }

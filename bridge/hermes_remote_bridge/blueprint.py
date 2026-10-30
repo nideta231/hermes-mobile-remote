@@ -451,8 +451,10 @@ def apply_op(doc: dict, op: dict, by: str = "phone") -> str | None:
         # No position: into another column it lands where the settings say; within its column, at the end.
         index = op["index"] if "index" in op else (_default_index(doc) if col["id"] != card["column"] else None)
         card["column"], card["order"] = col["id"], _order_after(others, col["id"], index)
-        if col["id"] == _last_column(doc):  # finished: nobody is working on it any more
+        if col["id"] == _last_column(doc):  # finished: nobody is working on it any more, nothing left to answer
             card["agent"] = None
+            for m in open_asks(card):
+                m["resolved"] = True
         card["updated"] = time.time()
         return f"Moved '{card['title']}' to {col['name']}"
     if kind == "card.comment":  # a note on a card; question/review = needs the user's answer
@@ -597,7 +599,7 @@ def to_markdown(doc: dict, defaults: dict | None = None, global_instructions: st
     if asks:
         lines += ["## Waiting for the user (open questions and reviews)"]
         lines += [f"- {c['title']}  `{c['id']}`: {m['kind']} by {m['by']}: {m['text'][:200]}" for c, m in asks]
-        lines.append("")
+        lines += ["Answered in the chat instead of on the card? Resolve it: `card resolve <card id>` (and note the answer with `card comment`).", ""]
     lines.append("## Flow")
     cards_by_node = {c["node"]: c for c in b["cards"] if c.get("node")}
     cols = {c["id"]: c["name"] for c in b["columns"]}

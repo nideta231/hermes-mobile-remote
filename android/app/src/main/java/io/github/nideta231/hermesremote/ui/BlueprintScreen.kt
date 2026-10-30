@@ -135,6 +135,8 @@ class BlueprintActions(
     val openGlobalSettings: () -> Unit = {},
     /** Send a picked file (content uri) to the PC; answers its PC path, or null when it failed (already said why). */
     val upload: suspend (String) -> String? = { null },
+    /** The user resolved Hermes' question/review on [BpCard]: tell the chat that asked (no-op when none is known). */
+    val resolved: (Blueprint, BpCard, io.github.nideta231.hermesremote.data.BpComment) -> Unit = { _, _, _ -> },
 )
 
 private fun bpColor(name: String, dark: Boolean): Color = when (name) {
@@ -1051,7 +1053,12 @@ private fun CommentsSection(card: BpCard, bp: Blueprint, actions: BlueprintActio
                 if (m.text.isNotBlank()) Text(m.text, style = MaterialTheme.typography.bodyMedium)
                 if (m.files.isNotEmpty()) AttachmentPreviews(m.files, Modifier.padding(top = 2.dp))
                 if (m.kind != "comment") Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { actions.apply(arrayOf(BpOp.of("comment.resolve", "id" to card.id, "comment_id" to m.id, "resolved" to !m.resolved))) {} }) {
+                    TextButton(onClick = {
+                        val resolving = !m.resolved
+                        actions.apply(arrayOf(BpOp.of("comment.resolve", "id" to card.id, "comment_id" to m.id, "resolved" to resolving))) {
+                            if (resolving && m.by == "hermes") actions.resolved(bp, card, m)
+                        }
+                    }) {
                         Text(if (m.resolved) "Reopen" else if (m.kind == "review") "Mark reviewed" else "Mark answered")
                     }
                 }

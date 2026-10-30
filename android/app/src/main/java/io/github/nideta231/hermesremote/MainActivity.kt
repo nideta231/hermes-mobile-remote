@@ -483,7 +483,8 @@ class MainActivity : ComponentActivity() {
                                 unread = { c -> seenTick.let { vm.blueprints.seen?.unread(pid, c) ?: 0 } },
                                 markSeen = { c -> vm.blueprints.markSeen(pid, c) },
                                 openGlobalSettings = { vm.blueprints.refreshList(); page = Page.SETTINGS },
-                                upload = vm::uploadBlueprintFile),
+                                upload = vm::uploadBlueprintFile,
+                                resolved = { b, c, m -> if (vm.blueprintResolved(b, c, m)) page = Page.CHAT }),
                                 onBack = { vm.blueprints.refreshList(); page = Page.CHAT })
                         } ?: run { page = Page.CHAT }
                         Page.BRIDGE -> BridgeAdminScreen(bridgeAdminState, BridgeAdminActions(refresh = vm.bridgeAdmin::refresh,

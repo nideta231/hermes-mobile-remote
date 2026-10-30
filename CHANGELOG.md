@@ -17,6 +17,15 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## Unreleased
+
+- Blueprint boards: **Mark reviewed** / **Mark answered** on a Hermes question or review now tells
+  the chat that asked (opened and steered while it runs, a new turn when idle), so Hermes carries
+  on without a separate "Tell Hermes I replied".
+- Answering a card's question in the chat instead of on the card: Hermes now resolves it on the
+  card itself, and moving a card to the last column closes any question or review still open on it.
+  Needs the updated bridge.
+
 ## v1.40.0
 
 - **Board attachments up to 10 MB, with a clear message**: attaching a file or picture to a board

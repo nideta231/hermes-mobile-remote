@@ -456,6 +456,14 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         } + rules)
     }
 
+    /** The user resolved Hermes' question/review [m] on the phone: tell the chat that asked. False when no chat is known. */
+    fun blueprintResolved(b: io.github.nideta231.hermesremote.data.Blueprint, card: io.github.nideta231.hermesremote.data.BpCard,
+                          m: io.github.nideta231.hermesremote.data.BpComment): Boolean {
+        val sid = io.github.nideta231.hermesremote.data.resolvedPingChat(card, m) ?: return false
+        replyInChat(sid, io.github.nideta231.hermesremote.data.resolvedPingText(b, card, m))
+        return true
+    }
+
     /** Open chat [sid] and send [text] there: a steer while it runs, a new turn when idle; drafted if the chat won't open. */
     private fun replyInChat(sid: String, text: String) {
         openSession(sid)
