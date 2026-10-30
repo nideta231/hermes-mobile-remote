@@ -1,6 +1,6 @@
 [project]
 name = "hermes-remote-bridge"
-version = "1.0.0"
+version = "0.0.0"  # packaging only; the bridge reports its release tag (hermes_remote_bridge.__version__)
 description = "Self-hosted bridge between the Hermes Mobile Remote Android app and the local Hermes Agent API server"
 license = "MIT"
 requires-python = ">=3.11"
