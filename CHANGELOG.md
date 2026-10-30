@@ -17,7 +17,7 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
-## Unreleased
+## v1.43.0
 
 - Blueprint boards: the "Hermes got your review" message with **View chat** now shows inside an open
   card too (it was hidden behind the card sheet).
