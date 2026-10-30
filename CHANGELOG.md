@@ -17,7 +17,7 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
-## Unreleased
+## v1.41.0
 
 - Blueprint boards: **Mark reviewed** / **Mark answered** on a Hermes question or review now tells
   the chat that asked (opened and steered while it runs, a new turn when idle), so Hermes carries
