@@ -61,6 +61,8 @@ $B trash -p shop                         # moves to the trash (restorable from t
 Run from the project folder and `-p` can be dropped (`--here` is implied when no project is named).
 Priorities: low medium high. Assignee: me, hermes. Dates: YYYY-MM-DD. Every change is logged with who made it.
 
+- Files on the card itself (shown as "attached:" in `md`) live in its `files` list: add one with `card.update` `"files": [...existing, "<abs path>"]` (the list is replaced, not appended). Files the phone attached are in `blueprints_dir/files/<project id>/`.
+
 ## Don't
 - Don't edit the JSON files by hand (`blueprint path`); use the commands, which merge with the phone's edits.
 - Don't mark a card Done before the work is verified.
