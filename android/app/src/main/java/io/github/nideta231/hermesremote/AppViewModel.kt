@@ -647,6 +647,15 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     init {
         // Composer attachments don't outlive the process, so no copy from an earlier run is in use.
         SharedFiles.clearAll(app)
+        // An approval answered from its notification: the open chat stops showing the dock.
+        viewModelScope.launch {
+            LiveLink.notificationAnswers.collect { (id, choice) ->
+                _chat.update { st ->
+                    if (LiveReducer.openApproval(st.items)?.request?.id != id) st
+                    else st.copy(items = LiveReducer.resolve(st.items, id, choice), status = "working")
+                }
+            }
+        }
         enterActiveHost()
         updates.showWhatsNew()
         ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)

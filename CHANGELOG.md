@@ -17,6 +17,15 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## v1.39.0
+
+- **Approve from the lock screen**: an approval notification now has *Deny*, *Allow* and *Allow for
+  session* buttons, so you can answer without opening the app. Allowing asks you to unlock the phone
+  first (Android 12 and newer), denying works straight from the lock screen. The notification then
+  says what you chose and clears itself; if the phone has lost its link to the PC it says the answer
+  was not sent and opens the chat when tapped. With *hide sensitive content* on, the lock screen
+  shows only that an approval is waiting, not the command. *Always allow* stays in the app.
+
 ## v1.38.0
 
 - **Attach files and pictures to blueprint cards**: a card has an *Attachments* section with an

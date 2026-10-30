@@ -35,6 +35,7 @@ Roughly, in the order the pieces landed:
 - An end-to-end test in CI: the app's real socket and reducer code against the real bridge and the
   demo backend (`demo/e2e.sh`, job `e2e-demo`). `LiveBridgeTest` still covers a real Hermes on a
   maintainer machine.
+- 1.39: approve from the lock screen (Deny / Allow buttons on the approval notification).
 
 ## Next
 
@@ -44,9 +45,6 @@ Tailscale and report back, because CI has neither. The checklist of what is unpr
 
 **macOS.** The seam exists (`host/macos.py`); the local-network path, a launchd agent and an
 installer are missing. Loopback and Tailscale would already work. Needs a Mac to develop on.
-
-**Approve from the lock screen.** The approval notification opens the app today; answering from
-the notification itself would save a step.
 
 **Session search that reaches the server.** Search filters the sessions the app has already
 listed (all of them, up to 2,000). Pushing the query into the Hermes sessions API would make it

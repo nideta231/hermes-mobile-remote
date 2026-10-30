@@ -214,6 +214,19 @@ object LiveLink {
         }
     }
 
+    /** Approvals answered from the notification's buttons (requestId to choice): the open chat marks them decided. */
+    private val _notificationAnswers = kotlinx.coroutines.flow.MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 16)
+    val notificationAnswers: kotlinx.coroutines.flow.SharedFlow<Pair<String, String>> = _notificationAnswers
+
+    /** Send an approval answer picked on the notification. False when the link to the PC is down. */
+    fun answerApproval(context: Context, requestId: String, choice: String): Boolean {
+        val g = gateway ?: return false
+        if (g.state.value != GatewayState.OPEN) return false
+        if (!g.reply(requestId, JSONObject().put("choice", choice))) return false
+        _notificationAnswers.tryEmit(requestId to choice)
+        return true
+    }
+
     /** A question was answered here: stop alerting about it. */
     fun answered(context: Context, requestId: String) = Notifier.clearQuestion(context, requestId)
 }

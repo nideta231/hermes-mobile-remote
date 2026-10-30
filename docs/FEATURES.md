@@ -112,6 +112,11 @@ composer showing the exact command and four choices: allow once, allow for the s
 allow, or deny. Answer on whichever screen is closer: the phone and the desktop see the same
 question, and answering on one withdraws it from the other.
 
+**Approve from the notification.** With the app in the background, the approval notification has
+*Deny*, *Allow* and *Allow for session* buttons; it works on the lock screen too. Allowing asks for
+the phone to be unlocked first (Android 12+), so a command never runs because someone else picked
+the phone up. *Always allow* is only offered in the app.
+
 **Questions from the agent.** When the agent asks you something (the clarify tool), the choices or
 a text field appear in the same dock.
 

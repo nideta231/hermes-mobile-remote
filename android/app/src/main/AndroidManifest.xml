@@ -76,6 +76,11 @@
             android:name=".data.InstallResultReceiver"
             android:exported="false" />
 
+        <!-- Deny / Allow buttons on approval notifications. -->
+        <receiver
+            android:name=".data.ApprovalActionReceiver"
+            android:exported="false" />
+
         <!-- Home-screen widgets (formerly PC Glance). -->
         <receiver
             android:name=".data.PcStatsWidget"
