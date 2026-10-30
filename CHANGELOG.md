@@ -17,7 +17,7 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
-## Unreleased
+## v1.40.0
 
 - **Board attachments up to 10 MB, with a clear message**: attaching a file or picture to a board
   card or comment failed for anything over about 1 MB (the bridge refused it before the upload
