@@ -1540,6 +1540,8 @@ private fun FileCard(path: String) {
     val name = remember(path) { fileName(path) }
     var info by remember { mutableStateOf(false) }
     if (info) FileInfoDialog(path) { info = false }
+    /** A text file open in the built-in reader. */
+    var reading by remember(path) { mutableStateOf<java.io.File?>(null) }
     fun toast(msg: String) = android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
     // Android 8/9: no MediaStore Downloads without a permission, so the user picks where it goes.
     val pick = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -1564,19 +1566,23 @@ private fun FileCard(path: String) {
             } finally { busy = false }
         }
     }
-    fun open() = withFile { f ->
+    fun openWith(f: java.io.File) {
         val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", f)
         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).setDataAndType(uri, mimeOf(name))
             .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         try { context.startActivity(android.content.Intent.createChooser(intent, name).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
         catch (_: android.content.ActivityNotFoundException) { toast("No app on this phone opens $name. Use the download arrow.") }
     }
-    fun save() = withFile { f ->
+    // Text and Markdown open in the app's own reader (Preview / Plain, Copy, Save); the rest in another app.
+    fun open() = withFile { f -> if (io.github.nideta231.hermesremote.data.TextReading.readsInApp(name)) reading = f else openWith(f) }
+    fun saveFile(f: java.io.File) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) scope.launch {
             val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { saveDownload(context, name, f) }
             toast(if (ok) "Saved to Downloads/Hermes Remote" else "Couldn't save $name")
         } else { pending = f; pick.launch(name) }
     }
+    fun save() = withFile { f -> saveFile(f) }
+    reading?.let { f -> TextReader(f, name, onClose = { reading = null }, onSave = { saveFile(f) }, onOpenWith = { openWith(f) }) }
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(14.dp),
         modifier = Modifier.widthIn(min = 180.dp, max = 300.dp).clip(RoundedCornerShape(14.dp)).clickable { open() }) {
         Row(Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1584,7 +1590,8 @@ private fun FileCard(path: String) {
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f, fill = false)) {
                 Text(name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (busy) "Getting it from the PC…" else name.substringAfterLast('.', "file").uppercase().take(6) + " · tap to open",
+                Text(if (busy) "Getting it from the PC…" else name.substringAfterLast('.', "file").uppercase().take(6) +
+                    if (io.github.nideta231.hermesremote.data.TextReading.readsInApp(name)) " · tap to read" else " · tap to open",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Spacer(Modifier.width(4.dp))

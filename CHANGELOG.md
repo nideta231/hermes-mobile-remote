@@ -31,6 +31,9 @@ request number.
   your answer on the card no longer counts as a new comment. Needs the updated bridge.
 - Hermes keeps going on other boards while one board waits for your answer (new
   `blueprint working` command lists every board's Working cards that can go on).
+- **Built-in text reader**: Markdown, text, log, CSV and code files in a chat or on a board card
+  open inside the app, with **Preview** (rendered Markdown) / **Plain text**, **Copy**, **Save** and
+  **Open with…** for another app.
 
 ## v1.41.0
 
