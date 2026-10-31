@@ -1,0 +1,3 @@
+name: library
+version: 1.0.0
+description: "Memory Library (Hermes Remote): ranked long-term memory on a local Postgres, managed from the phone."

@@ -42,6 +42,8 @@ from . import selfupdate
 from . import notes as notes_mod
 from . import blueprint as bp_mod
 from . import funnel as funnel_mod
+from . import library as lib_mod
+from . import library_store as lib_store
 from .local_api import devices_doc, pairing_payload, pairing_uri, qr_png, trust_doc
 from .network import TrustStore, current_network, network_info, serving_lan_ips
 from .chat_files import referenced_file
@@ -618,7 +620,8 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
                                               ("blueprints", cfg.blueprints),
                                               ("funnel", cfg.funnel and tailnet_socket is not None),
                                               ("admin", cfg.remote_admin),
-                                              ("parked", cfg.remote_admin)) if on],
+                                              ("parked", cfg.remote_admin),
+                                              ("library", cfg.library)) if on],
                 "bridge_version": __version__, "protocol": PROTOCOL}
 
     note_store = notes_mod.NoteStore(cfg.notes_dir)
@@ -1085,6 +1088,245 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
     def cli_scoped(profile: str | None, *args: str) -> tuple[str, ...]:
         """Hermes CLI argv for `profile` (its global `-p` flag)."""
         return ("-p", profile, *args) if profile else args
+
+    # ------------------------------------------------------------ Memory Library
+    # Hermes' own memory provider on a pinned Postgres the feature owns (library.py). The phone
+    # installs it (after a consent screen), switches it on per profile, browses and edits memories,
+    # tests recall and draws the knowledge map. Installing, switching and removing are PC admin.
+
+    lib_paths = lib_mod.paths(cfg.library_dir)
+
+    def _lib_on() -> None:
+        if not cfg.library:
+            raise ApiError(404, "library_off", "The Memory Library is off (library = false)")
+
+    def _lib_name(profile: str | None) -> str:
+        return profile or "default"
+
+    async def _lib_call(fn, *args, **kw):
+        try:
+            return await asyncio.to_thread(fn, *args, **kw)
+        except lib_store.Invalid as exc:
+            raise ApiError(400, "invalid", str(exc))
+        except lib_store.StoreError as exc:
+            raise ApiError(503, "library_unavailable", str(exc))
+        except RuntimeError as exc:
+            raise ApiError(409, "library_refused", str(exc))
+
+    def _lib_store(profile: str | None) -> lib_store.Store:
+        if not lib_store.is_installed(lib_paths):
+            raise ApiError(409, "library_not_installed", "Install the Memory Library first (PC bridge > Memory Library)")
+        return lib_store.Store(lib_paths, _lib_name(profile))
+
+    async def _lib_ready(profile: str | None) -> lib_store.Store:
+        store = _lib_store(profile)
+        await _lib_call(lib_store.ensure_running, lib_paths)
+        await _lib_call(store.ensure_database)
+        return store
+
+    @app.get("/v1/library")
+    async def library_status(profile: str | None = Depends(profile_param)):
+        _lib_on()
+        st = await _lib_call(lib_mod.status, cfg.hermes_bin, cfg.hermes_home, _lib_name(profile), lib_paths)
+        pre = await _lib_call(lib_mod.preflight, cfg.hermes_bin, cfg.hermes_home, _lib_name(profile), lib_paths)
+        st.update(provider=pre["provider"], custom_provider=pre["custom_provider"],
+                  plugin_dir_conflict=pre["plugin_dir_conflict"], builtin_memory=pre["builtin_memory"], plan=pre["plan"],
+                  admin=cfg.remote_admin)
+        st["settings"] = await _lib_call(lib_mod.settings, cfg.hermes_bin, _lib_name(profile))
+        return st
+
+    @app.post("/v1/library/install")
+    async def library_install(request: Request, device: Device = Depends(device_auth)):
+        _lib_on(); _admin_on()
+        body = await request.json() if await request.body() else {}
+        if not (isinstance(body, dict) and body.get("accept") is True):
+            raise ApiError(400, "consent_needed", "Show the install plan and send accept: true")
+        audit_event({"event": "library_install", "device": device.id})
+        await _lib_call(lib_mod.install_async, lib_paths)
+        return {"job": lib_mod.job()}
+
+    @app.get("/v1/library/job")
+    async def library_job(_: Device = Depends(device_auth)):
+        _lib_on()
+        return {"job": lib_mod.job()}
+
+    @app.post("/v1/library/enable")
+    async def library_enable(request: Request, profile: str | None = Depends(profile_param)):
+        _lib_on(); _admin_on()
+        body = await request.json() if await request.body() else {}
+        body = body if isinstance(body, dict) else {}
+        audit_event({"event": "library_enable", "device": request.state.device.id, "profile": _lib_name(profile)})
+        return await _lib_call(lib_mod.enable, cfg.hermes_bin, cfg.hermes_home, _lib_name(profile),
+                               replace_custom=body.get("replace_custom") is True,
+                               import_memory=body.get("import_memory", True) is not False, p=lib_paths)
+
+    @app.post("/v1/library/disable")
+    async def library_disable(request: Request, profile: str | None = Depends(profile_param)):
+        _lib_on(); _admin_on()
+        audit_event({"event": "library_disable", "device": request.state.device.id, "profile": _lib_name(profile)})
+        return await _lib_call(lib_mod.disable, cfg.hermes_bin, cfg.hermes_home, _lib_name(profile), lib_paths)
+
+    @app.post("/v1/library/remove")
+    async def library_remove(request: Request, device: Device = Depends(device_auth)):
+        _lib_on(); _admin_on()
+        body = await request.json() if await request.body() else {}
+        purge = isinstance(body, dict) and body.get("purge") is True
+        audit_event({"event": "library_remove", "device": device.id, "purge": purge})
+        return await _lib_call(lib_mod.remove, cfg.hermes_bin, cfg.hermes_home, purge=purge, p=lib_paths)
+
+    @app.get("/v1/library/doctor")
+    async def library_doctor(profile: str | None = Depends(profile_param)):
+        _lib_on()
+        return await _lib_call(lib_mod.doctor, cfg.hermes_bin, cfg.hermes_home, _lib_name(profile), lib_paths)
+
+    @app.post("/v1/library/fix/{action}")
+    async def library_fix(action: str, request: Request, profile: str | None = Depends(profile_param)):
+        _lib_on(); _admin_on()
+        if action not in ("start", "enable", "disable", "migrate", "merge", "install"):
+            raise ApiError(404, "no_such_fix", f"Unknown fix: {action}")
+        audit_event({"event": "library_fix", "device": request.state.device.id, "fix": action})
+        result = await _lib_call(lib_mod.fix, cfg.hermes_bin, cfg.hermes_home, _lib_name(profile), action, lib_paths)
+        return {"result": result, "doctor": await _lib_call(lib_mod.doctor, cfg.hermes_bin, cfg.hermes_home,
+                                                            _lib_name(profile), lib_paths)}
+
+    @app.put("/v1/library/settings")
+    async def library_settings(request: Request, profile: str | None = Depends(profile_param)):
+        _lib_on()
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ApiError(400, "invalid", "Expected a JSON object")
+        values = {}
+        for key in lib_mod.SETTINGS:
+            if key in body:
+                if not isinstance(body[key], bool):
+                    raise ApiError(400, "invalid", f"{key} must be true or false")
+                values[key] = body[key]
+        for key in ("model", "provider"):
+            if key in body:
+                v = body[key]
+                if not isinstance(v, str) or len(v) > 200 or not re.fullmatch(r"[A-Za-z0-9_.:/@+-]*", v):
+                    raise ApiError(400, "invalid", f"Invalid {key}")
+                values[key] = v
+        return await _lib_call(lib_mod.set_settings, cfg.hermes_bin, _lib_name(profile), **values)
+
+    @app.get("/v1/library/memories")
+    async def library_list(kind: str = "", scope: str = "", status: str = "active", q: str = "",
+                           review: bool | None = None, min_severity: int = 1, sort: str = "severity",
+                           limit: int = 100, offset: int = 0, profile: str | None = Depends(profile_param)):
+        _lib_on()
+        store = await _lib_ready(profile)
+        return await _lib_call(store.list, kind=kind, scope=scope, status=status, q=q[:200], review=review,
+                               min_severity=min_severity, sort=sort, limit=limit, offset=offset)
+
+    @app.post("/v1/library/memories")
+    async def library_add(request: Request, profile: str | None = Depends(profile_param)):
+        _lib_on()
+        b = await request.json()
+        if not isinstance(b, dict):
+            raise ApiError(400, "invalid", "Expected a JSON object")
+        store = await _lib_ready(profile)
+        return await _lib_call(store.add, str(b.get("text", "")), kind=b.get("kind", "fact"),
+                               severity=b.get("severity", 2), scope=b.get("scope", "global"),
+                               keywords=str(b.get("keywords", "")), source="phone", by="phone")
+
+    @app.get("/v1/library/memories/{mid}")
+    async def library_get(mid: int, profile: str | None = Depends(profile_param)):
+        _lib_on()
+        store = await _lib_ready(profile)
+        row = await _lib_call(store.get, mid)
+        if row is None:
+            raise ApiError(404, "no_memory", f"No memory #{mid}")
+        return row
+
+    @app.patch("/v1/library/memories/{mid}")
+    async def library_update(mid: int, request: Request, profile: str | None = Depends(profile_param)):
+        _lib_on()
+        b = await request.json()
+        if not isinstance(b, dict):
+            raise ApiError(400, "invalid", "Expected a JSON object")
+        store = await _lib_ready(profile)
+        fields = {k: b[k] for k in ("text", "kind", "severity", "scope", "keywords", "status", "review") if k in b}
+        return await _lib_call(store.update, mid, by="phone", **fields)
+
+    @app.post("/v1/library/memories/{mid}/bump")
+    async def library_bump(mid: int, profile: str | None = Depends(profile_param)):
+        _lib_on()
+        store = await _lib_ready(profile)
+        return await _lib_call(store.bump, mid, by="phone")
+
+    @app.delete("/v1/library/memories/{mid}")
+    async def library_delete(mid: int, request: Request, profile: str | None = Depends(profile_param)):
+        _lib_on()
+        store = await _lib_ready(profile)
+        audit_event({"event": "library_delete", "device": request.state.device.id, "memory": mid})
+        await _lib_call(store.delete, mid)
+        return {"deleted": True}
+
+    @app.post("/v1/library/merge")
+    async def library_merge(request: Request, profile: str | None = Depends(profile_param)):
+        _lib_on()
+        b = await request.json()
+        if not (isinstance(b, dict) and isinstance(b.get("keep"), int) and isinstance(b.get("drop"), int)):
+            raise ApiError(400, "invalid", "keep and drop must be memory ids")
+        store = await _lib_ready(profile)
+        return await _lib_call(store.merge, b["keep"], b["drop"], text=b.get("text") or None, by="phone")
+
+    @app.post("/v1/library/links")
+    async def library_link(request: Request, profile: str | None = Depends(profile_param)):
+        _lib_on()
+        b = await request.json()
+        if not (isinstance(b, dict) and isinstance(b.get("src"), int) and isinstance(b.get("dst"), int)):
+            raise ApiError(400, "invalid", "src and dst must be memory ids")
+        store = await _lib_ready(profile)
+        if b.get("remove") is True:
+            await _lib_call(store.unlink, b["src"], b["dst"], str(b.get("rel", "")), by="phone")
+            return {"removed": True}
+        return await _lib_call(store.link, b["src"], b["dst"], str(b.get("rel", "related")), by="phone")
+
+    @app.post("/v1/library/recall")
+    async def library_recall(request: Request, profile: str | None = Depends(profile_param)):
+        """Test recall: what Hermes would get before answering this message, with the score parts."""
+        _lib_on()
+        b = await request.json()
+        if not isinstance(b, dict) or not isinstance(b.get("query"), str):
+            raise ApiError(400, "invalid", "query is required")
+        scopes = [x for x in (b.get("scopes") or []) if isinstance(x, str)][:5]
+        store = await _lib_ready(profile)
+        result = await _lib_call(store.recall, b["query"][:2000], scopes=scopes, limit=8, mark=False, explain=True)
+        names = {pid: name for pid, name, _ in await asyncio.to_thread(lib_store.projects, cfg.hermes_home)}
+        result["injected"] = lib_store.Store.format_recall(result, names)
+        return result
+
+    @app.get("/v1/library/stats")
+    async def library_stats(profile: str | None = Depends(profile_param)):
+        _lib_on()
+        store = await _lib_ready(profile)
+        return await _lib_call(store.stats)
+
+    @app.get("/v1/library/scopes")
+    async def library_scopes(_: Device = Depends(device_auth)):
+        """Projects a memory can be scoped to (Hermes projects with an id and a name)."""
+        _lib_on()
+        rows = await asyncio.to_thread(lib_store.projects, cfg.hermes_home)
+        return {"projects": [{"id": pid, "name": name, "scope": f"project:{pid}"} for pid, name, _ in rows]}
+
+    @app.get("/v1/library/graph")
+    async def library_graph(scope: str = "", kinds: str = "", min_severity: int = 1, chats: bool = False,
+                            profile: str | None = Depends(profile_param)):
+        """The knowledge map: memories, the projects/clients they apply to, optionally the chats they came from."""
+        _lib_on()
+        store = await _lib_ready(profile)
+        g = await _lib_call(store.graph, scope=scope, kinds=[k for k in kinds.split(",") if k],
+                            min_severity=min_severity, chats=chats)
+        names = {pid: name for pid, name, _ in await asyncio.to_thread(lib_store.projects, cfg.hermes_home)}
+        titles = await asyncio.to_thread(lib_store.session_titles, cfg.hermes_home,
+                                         [n["session"] for n in g["nodes"] if n["type"] == "chat"])
+        for n in g["nodes"]:
+            if n["type"] == "project":
+                n["label"] = names.get(n["label"], n["label"])
+            elif n["type"] == "chat":
+                n["label"] = titles.get(n["session"]) or "Chat"
+        return g
 
     @app.get("/v1/profiles")
     async def list_profiles(_: Device = Depends(device_auth)):

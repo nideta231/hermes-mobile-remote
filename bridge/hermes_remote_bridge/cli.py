@@ -793,6 +793,114 @@ def cmd_notes(cfg: Config, args: argparse.Namespace) -> None:
         sys.exit(f"No note {getattr(args, 'id', '')!r}; `hermes-remote-bridge notes list` shows the ids.")
 
 
+def cmd_library(cfg: Config, args: argparse.Namespace) -> None:
+    """Memory Library: install the pinned runtime, switch it on per profile, check and browse it."""
+    from . import library as lib
+    from . import library_store as ls
+
+    p = lib.paths(cfg.library_dir)
+    prof = args.profile or "default"
+    words = list(args.words or [])
+
+    def show(obj) -> None:
+        print(json.dumps(obj, ensure_ascii=False, indent=2, default=str))
+
+    def store() -> ls.Store:
+        ls.ensure_running(p)
+        s = ls.Store(p, prof)
+        s.ensure_database()
+        return s
+
+    def line(m: dict) -> str:
+        flags = " [review]" if m.get("review") else ""
+        return (f"#{m['id']}  {m['kind']:<10} sev {m['severity']}  {m['scope']:<24} hits {m['hits']} "
+                f"rep {m['repeats']}{flags}\n    {m['text']}")
+
+    a = args.action
+    try:
+        if a == "status":
+            st = lib.status(cfg.hermes_bin, cfg.hermes_home, prof, p)
+            if args.json:
+                show(st); return
+            print(f"Supported : {'yes' if st['supported'] else 'no: ' + str(st['reason'])}")
+            print(f"Installed : {'yes' if st['installed'] else 'no'}  (running: {'yes' if st['running'] else 'no'})")
+            print(f"Profile {st['profile']}: {'ON' if st['enabled'] else 'off'}")
+            print(f"Folder    : {p.root}")
+        elif a == "plan":
+            show(lib.plan(p))
+        elif a == "install":
+            pl = lib.plan(p)
+            mb = lambda n: f"{n / 1_000_000:.0f} MB"  # noqa: E731
+            print(f"Downloads {mb(pl['download_bytes'])}, uses about {mb(pl['disk_bytes'])} at {pl['location']} "
+                  f"(free: {mb(pl['disk_free_bytes'])}). {pl['network']}")
+            if not args.yes and input("Install? [y/N] ").strip().lower() != "y":
+                sys.exit("Cancelled; nothing was installed.")
+            show(lib.install(p, accept=True))
+        elif a == "enable":
+            show(lib.enable(cfg.hermes_bin, cfg.hermes_home, prof, replace_custom=args.switch,
+                            import_memory=not args.no_import, p=p))
+        elif a == "disable":
+            show(lib.disable(cfg.hermes_bin, cfg.hermes_home, prof, p))
+        elif a == "remove":
+            if args.purge and not args.yes and input("Delete every memory (a dump is kept)? [y/N] ").strip().lower() != "y":
+                sys.exit("Cancelled.")
+            show(lib.remove(cfg.hermes_bin, cfg.hermes_home, purge=args.purge, p=p))
+        elif a == "doctor":
+            if args.fix:
+                show(lib.fix(cfg.hermes_bin, cfg.hermes_home, prof, args.fix, p))
+            d = lib.doctor(cfg.hermes_bin, cfg.hermes_home, prof, p)
+            if args.json:
+                show(d); return
+            for c in d["checks"]:
+                print(f"[{c['status'].upper():>4}] {c['id']:<10} {c['text']}" + (f"  (fix: --fix {c['fix']})" if c["fix"] else ""))
+            if any(c["status"] == "fail" for c in d["checks"]):
+                sys.exit(1)
+        elif a == "settings":
+            vals = {}
+            for w in words:
+                k, _, v = w.partition("=")
+                if k in lib.SETTINGS:
+                    vals[k] = v.lower() in ("1", "true", "yes", "on")
+                elif k in ("model", "provider"):
+                    vals[k] = v
+                else:
+                    sys.exit(f"Unknown setting {k!r}: smart_recall, session_review, model, provider")
+            show(lib.set_settings(cfg.hermes_bin, prof, **vals) if vals else lib.settings(cfg.hermes_bin, prof))
+        elif a == "list":
+            r = store().list(kind=args.kind or "", scope=args.scope or "", q=" ".join(words), sort=args.sort,
+                             limit=args.limit, status=args.status)
+            if args.json:
+                show(r); return
+            for m in r["items"]:
+                print(line(m))
+            print(f"{len(r['items'])} of {r['total']}")
+        elif a == "search":
+            r = store().recall(" ".join(words), scopes=[args.scope] if args.scope else [], limit=args.limit,
+                               mark=False, explain=True)
+            if args.json:
+                show(r); return
+            print(ls.Store.format_recall(r, {pid: n for pid, n, _ in ls.projects(cfg.hermes_home)}) or "Nothing recalled.")
+        elif a == "add":
+            show(store().add(" ".join(words), kind=args.kind or "fact", severity=args.severity or 2,
+                             scope=args.scope or "global", keywords=args.keywords or "", source="cli", by="cli"))
+        elif a == "show":
+            show(store().get(int(words[0])) or {"error": "no such memory"})
+        elif a == "edit":
+            mid, text = int(words[0]), " ".join(words[1:])
+            show(store().update(mid, by="cli", text=text or None, kind=args.kind, severity=args.severity,
+                                scope=args.scope, keywords=args.keywords, status=args.set_status))
+        elif a == "bump":
+            show(store().bump(int(words[0]), by="cli", note=" ".join(words[1:])))
+        elif a == "stats":
+            show(store().stats())
+        elif a == "path":
+            print(p.root)
+    except (ls.Invalid, ls.StoreError, RuntimeError) as exc:
+        sys.exit(f"error: {exc}")
+    except (IndexError, ValueError):
+        sys.exit("error: give the memory id, e.g. `hermes-remote-bridge library show 12`")
+
+
 def cmd_update(cfg: Config, args: argparse.Namespace) -> None:
     """Check for a newer release and update to it. Pairings and settings are kept."""
     from . import selfupdate
@@ -945,6 +1053,25 @@ def main(argv: list[str] | None = None) -> None:
     nt.add_argument("--query", "-q", help="list: search title, text and labels")
     nt.add_argument("--all", action="store_true", help="list: include archived")
     nt.add_argument("--json", action="store_true")
+    lb = sub.add_parser("library", help="Memory Library: Hermes' own memory on a private Postgres")
+    lb.add_argument("action", choices=("status", "plan", "install", "enable", "disable", "remove", "doctor", "settings",
+                                       "list", "search", "add", "show", "edit", "bump", "stats", "path"))
+    lb.add_argument("words", nargs="*", help="Text / query / memory id (+ text for edit); settings: key=value")
+    lb.add_argument("--profile", help="Hermes profile (default: the default profile)")
+    lb.add_argument("--kind", choices=("mistake", "rule", "preference", "workflow", "fact", "decision"))
+    lb.add_argument("--severity", type=int, choices=(1, 2, 3, 4, 5))
+    lb.add_argument("--scope", help="global, project:<id> or client:<name>")
+    lb.add_argument("--keywords")
+    lb.add_argument("--status", default="active", help="list: active (default), superseded, archived or ''")
+    lb.add_argument("--set-status", choices=("active", "superseded", "archived"), help="edit: new status")
+    lb.add_argument("--sort", default="severity", choices=("severity", "newest", "hits", "repeats", "unused"))
+    lb.add_argument("--limit", type=int, default=20)
+    lb.add_argument("--switch", action="store_true", help="enable: replace another memory provider (kept for disable)")
+    lb.add_argument("--no-import", action="store_true", help="enable: don't copy MEMORY.md / USER.md in")
+    lb.add_argument("--purge", action="store_true", help="remove: also delete the memories (after a dump)")
+    lb.add_argument("--fix", choices=("start", "enable", "disable", "migrate", "merge", "install"))
+    lb.add_argument("--yes", action="store_true")
+    lb.add_argument("--json", action="store_true")
     u = sub.add_parser("update", help="Update the bridge to the newest release (keeps pairings)")
     u.add_argument("--check", action="store_true", help="Only say whether an update is available")
     u.add_argument("--yes", action="store_true", help="Don't ask for confirmation")
@@ -973,7 +1100,7 @@ def main(argv: list[str] | None = None) -> None:
     handler = {"serve": cmd_serve, "pair": cmd_pair, "revoke": cmd_revoke, "devices": cmd_devices,
                "trust": cmd_trust, "doctor": cmd_doctor, "firewall": cmd_firewall,
                "supervise": cmd_supervise, "metrics": cmd_metrics, "update": cmd_update,
-               "notes": cmd_notes, "blueprint": cmd_blueprint}[args.command]
+               "notes": cmd_notes, "blueprint": cmd_blueprint, "library": cmd_library}[args.command]
     try:
         handler(cfg, args)
     except ValueError as exc:

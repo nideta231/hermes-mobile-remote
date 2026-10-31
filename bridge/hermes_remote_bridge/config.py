@@ -94,6 +94,10 @@ class Config:
     funnel: bool = True
     funnel_file: Path = CONFIG_DIR / "funnel.json"
     blueprints_dir: Path = CONFIG_DIR / "blueprints"
+    # Memory Library: Hermes' own memory provider on a pinned Postgres the feature installs (opt-in from
+    # the phone; nothing is downloaded or switched until the user accepts). false hides it entirely.
+    library: bool = True
+    library_dir: Path = STATE_DIR / "library"
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
