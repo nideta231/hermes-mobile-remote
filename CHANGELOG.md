@@ -17,6 +17,20 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## Unreleased
+
+- **Memory Library** (needs the updated bridge; Linux PCs): Hermes' own long-term memory on a private
+  database the bridge installs after you agree (about 34 MB download, never your own Postgres).
+  Memories have a kind, a severity and a scope; critical ones are always recalled in their scope, the
+  rest when a message matches. Switch it on per profile from the new *Memory Library* page (⋮ menu, or
+  PC bridge > Memory Library); an existing memory provider is kept unless you choose to switch, and
+  switching off restores it. MEMORY.md / USER.md are copied in for review. The page lists, filters,
+  edits, merges and archives memories, shows what Hermes would recall for a message and why (*Test
+  recall*), runs the doctor with one-tap fixes, and picks the memory model (same as the chat by
+  default).
+- The Graph page becomes a knowledge map when the Memory Library is set up: memories by kind and
+  severity around their projects and clients, with the chats they came from as an optional layer.
+
 ## v1.44.0
 
 - Tablets: the approval, question and password prompts and the message box stay at a readable

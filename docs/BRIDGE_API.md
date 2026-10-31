@@ -311,6 +311,53 @@ body; `- [ ]` / `- [x]` lines are checklist items. Hermes reads and edits the sa
 - `POST /v1/notes` `{title?, body?, color?, pinned?, labels?}` → the note.
 - `GET|PATCH|DELETE /v1/notes/{id}`: PATCH takes any of those fields plus `archived`; last write wins.
 
+## Memory Library (feature `library`)
+
+Hermes' own long-term memory provider, run by the bridge (config `library`, `library_dir`, default
+`~/.local/state/hermes-remote/library/`). Off until the user installs it and switches it on per profile.
+
+- Runtime: PostgreSQL 18.1 from pg0 0.15.2 (pinned asset + sha256, resumable download), unpacked under
+  `library_dir`, one cluster per PC, one database per Hermes profile. Socket only (`listen_addresses=`),
+  password in a 0600 file; the user's own Postgres is never used. Linux glibc >= 2.35, x86_64 or ARM64.
+  Under systemd the server is its own user unit `hermes-remote-library-<hash of the data dir>`.
+- Enabling installs the plugin `library` into `<profile home>/plugins/library` and sets
+  `memory.provider: library`; the previous provider is saved and restored on disable. Another external
+  provider is kept unless the caller sends `replace_custom: true`; a foreign `plugins/library` folder is
+  never touched. MEMORY.md / USER.md are copied in once (backup first, originals untouched, marked
+  `review`).
+- The plugin gives the chat `library_save / library_search / library_bump / library_update / library_link`
+  and recalls before each reply: every severity >= 4 rule/mistake/preference/workflow in scope (always),
+  plus matches ranked by `(full-text * 2 + trigram) * scope * severity * freshness`. Scope is the chat's
+  project (session cwd matched against Hermes projects) plus `global`, and `client:<name>` when the
+  message names the client. The memory model is the auxiliary slot `memory_library` (`auto` = the chat
+  model): optional smart recall (`memory.library.smart_recall`, off) and a review of finished chats
+  (`memory.library.session_review`, on) whose findings are saved with `review: true`.
+
+Routes (all `?profile=` aware; install/enable/disable/remove/fix also need `remote_admin`):
+
+- `GET /v1/library` → status: `supported, reason, installed, running, enabled, provider, custom_provider,
+  plugin_dir_conflict, builtin_memory, plan {download_bytes, disk_bytes, disk_free_bytes, enough_disk,
+  location, network, remove}, job, settings {smart_recall, session_review, model, provider}, benchmark`.
+- `POST /v1/library/install` `{accept: true}` (consent required) → starts the install; poll
+  `GET /v1/library/job` → `{job: {state: running|done|failed, step, done, total, error}}`.
+- `POST /v1/library/enable` `{replace_custom?, import_memory?}`, `POST /v1/library/disable`,
+  `POST /v1/library/remove` `{purge?}` (purge dumps everything to `backups/` first).
+- `GET /v1/library/doctor` → `{checks: [{id, status ok|warn|fail, text, fix}]}`;
+  `POST /v1/library/fix/{start|enable|disable|migrate|merge|install}` → `{result, doctor}`.
+- `PUT /v1/library/settings` `{smart_recall?, session_review?, model?, provider?}` (model `""` = auto).
+- `GET /v1/library/memories?kind&scope&status=active&q&review&min_severity&sort=severity|newest|hits|repeats|unused&limit&offset`
+  → `{items, total}`; `POST /v1/library/memories` `{text, kind, severity, scope, keywords}`;
+  `GET|PATCH|DELETE /v1/library/memories/{id}` (GET adds `links` and `history`);
+  `POST /v1/library/memories/{id}/bump`; `POST /v1/library/merge` `{keep, drop, text?}`;
+  `POST /v1/library/links` `{src, dst, rel: supersedes|causes|related, remove?}`.
+- `POST /v1/library/recall` `{query, scopes?}` → Test recall: `{pinned, relevant (with ft, sim, scope_w,
+  sev_w, fresh, score), injected}` (the exact text Hermes would get; does not count as a recall).
+- `GET /v1/library/stats`, `GET /v1/library/scopes` (Hermes projects as scopes),
+  `GET /v1/library/graph?scope&kinds&min_severity&chats` → `{nodes: [{id, type memory|global|project|client|chat, ...}], edges: [{from, to, rel}]}`.
+
+CLI: `hermes-remote-bridge library status|plan|install|enable|disable|remove|doctor|settings|list|search|add|show|edit|bump|stats|path`
+(`--profile`, `--switch`, `--no-import`, `--purge`, `--fix <action>`, `--yes`, `--json`).
+
 ## Blueprints
 
 A flow diagram + task board per Hermes project (feature `blueprints`, config `blueprints`,

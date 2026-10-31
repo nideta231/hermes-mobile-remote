@@ -96,6 +96,30 @@ time to refresh; tap anywhere else to open the PC page. Android refreshes them e
 - Limits: temperature is Linux only. On Windows the terminal has no PTY: line commands work,
   full-screen programs (vim, top) don't.
 
+## Memory Library
+
+**Hermes' own long-term memory.** *Memory Library* in the drawer's ⋮ menu (or PC bridge > Memory
+Library). Setup installs a private database on the PC after showing what it downloads (about 34 MB),
+the disk it needs and where it goes; then switch it on per Hermes profile. An existing memory
+provider is kept unless you choose to switch (it comes back when you switch off), and MEMORY.md /
+USER.md are copied in for review, never moved.
+
+**What Hermes remembers.** Every memory has a kind (mistake, rule, preference, workflow, fact,
+decision), a severity from Note to Fatal and a scope (everywhere, one project, or a client). Critical
+and fatal ones are always given to Hermes in their scope; the rest only when the message matches.
+Hermes saves lessons itself as you correct it, counts repeated mistakes (severity climbs) and, after a
+chat ends, the memory model reviews it for lessons it missed (marked *Needs review*).
+
+**Library page.** Filter by kind, severity, scope or review, sort by severity, repeats, recalls or
+never recalled; edit, mark reviewed, archive, merge two memories or delete. *Test recall* shows exactly
+what Hermes would get for a message and the score behind each match. *Setup* has the on/off switch,
+the doctor with one-tap fixes and the memory model (same as the chat by default, or any model Hermes
+already has).
+
+**Knowledge map.** With the Memory Library the Graph page maps what Hermes has learned: memories
+coloured by kind and sized by severity around the projects and clients they apply to. The chats they
+came from are an optional layer.
+
 ## Scheduled jobs
 
 **Scheduled jobs.** *Scheduled* in the drawer lists the cron jobs of the Hermes profile in use:
