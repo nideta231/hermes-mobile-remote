@@ -17,6 +17,11 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## v1.43.3
+
+- Blueprint boards: dragging the board left or right with a mouse (or a touchpad click-drag) now
+  scrolls it, like a finger swipe. Dragging a card still moves the card.
+
 ## v1.43.2
 
 - Fixed: over Tailscale Funnel, opening the PC page, Terminal, Notes, Scheduled or the PC bridge

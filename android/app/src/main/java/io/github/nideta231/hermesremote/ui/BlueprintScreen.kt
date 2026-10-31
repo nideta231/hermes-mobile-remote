@@ -614,7 +614,7 @@ private fun BoardView(bp: Blueprint, actions: BlueprintActions, openCard: String
             bp.tags.forEach { t -> FilterChip(tag == t, { tag = if (tag == t) null else t }, { Text("#$t") }, colors = themedChip()) }
         }
         Box(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { boardBounds = it.boundsInRoot() }) {
-            Row(Modifier.fillMaxSize().horizontalScroll(scroll).padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxSize().mouseDragScroll(scroll).horizontalScroll(scroll).padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 bp.columns.forEach { col ->
                     val cards = shownIn(bp, col.id, tag)
                     val target = drop?.first == col.id
@@ -1055,6 +1055,37 @@ internal class SheetScrollGuard(private val offset: () -> Int) : androidx.compos
         return if (keep) available.copy(x = 0f) else androidx.compose.ui.unit.Velocity.Zero
     }
 
+}
+
+/**
+ * Lets a mouse (or touchpad click-drag) pan the board sideways like a finger swipe. Compose scrollables
+ * ignore mouse drags on purpose (a mouse is expected to use the wheel), so on a tablet with a mouse the
+ * board could not be dragged at all. Touch is left alone (horizontalScroll handles it, with fling), and
+ * a drag that started on a card still moves the card: only drags on empty board space reach here first.
+ */
+internal fun Modifier.mouseDragScroll(state: androidx.compose.foundation.ScrollState): Modifier = pointerInput(state) {
+    awaitPointerEventScope {
+        while (true) {
+            val down = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Final)
+            val first = down.changes.firstOrNull() ?: continue
+            if (first.type != androidx.compose.ui.input.pointer.PointerType.Mouse || !first.pressed || first.isConsumed) continue
+            var lastX = first.position.x
+            var moved = 0f
+            while (true) {
+                val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Final)
+                val c = ev.changes.firstOrNull { it.id == first.id } ?: break
+                if (!c.pressed) break
+                if (c.isConsumed) break  // a card or column drag took over
+                val dx = c.position.x - lastX
+                lastX = c.position.x
+                moved += kotlin.math.abs(dx)
+                if (dx != 0f) {
+                    state.dispatchRawDelta(-dx)
+                    if (moved > viewConfiguration.touchSlop) c.consume()
+                }
+            }
+        }
+    }
 }
 
 /** Marks the "Waiting for you" board filter (not a real tag). */
