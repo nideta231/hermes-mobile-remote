@@ -17,7 +17,7 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
-## Unreleased
+## v1.45.0
 
 - **Memory Library** (needs the updated bridge; Linux PCs): Hermes' own long-term memory on a private
   database the bridge installs after you agree (about 34 MB download, never your own Postgres).
