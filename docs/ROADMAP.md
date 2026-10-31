@@ -46,13 +46,6 @@ Tailscale and report back, because CI has neither. The checklist of what is unpr
 **macOS.** The seam exists (`host/macos.py`); the local-network path, a launchd agent and an
 installer are missing. Loopback and Tailscale would already work. Needs a Mac to develop on.
 
-**Session search that reaches the server.** Search filters the sessions the app has already
-listed (all of them, up to 2,000). Pushing the query into the Hermes sessions API would make it
-scale past that and find text anywhere in a conversation, not just its title and preview.
-
-**Tablet parity.** The wide layout shows sessions beside the chat, but sheets and the approval
-dock are still phone-sized.
-
 ## Later
 
 **A desktop build.** The UI is Compose and not obviously phone-only. A resizable desktop client

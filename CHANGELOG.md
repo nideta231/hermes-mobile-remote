@@ -17,6 +17,12 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## v1.44.0
+
+- Tablets: the approval, question and password prompts and the message box stay at a readable
+  width (centred, up to 760 dp) instead of stretching across the whole chat. Bottom sheets were
+  already limited on wide screens.
+
 ## v1.43.3
 
 - Blueprint boards: dragging the board left or right with a mouse (or a touchpad click-drag) now

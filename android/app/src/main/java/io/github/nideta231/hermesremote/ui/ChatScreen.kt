@@ -314,23 +314,25 @@ fun ChatScreen(
         AnimatedVisibility(approval != null,
             enter = slideInVertically(spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(),
             exit = slideOutVertically(tween(180)) { it } + fadeOut(tween(180))) {
-            approval?.let { ApprovalDock(it, actions.approve) }
+            WideDock { approval?.let { ApprovalDock(it, actions.approve) } }
         }
         AnimatedVisibility(clarify != null && approval == null,
             enter = slideInVertically(spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(),
             exit = slideOutVertically(tween(180)) { it } + fadeOut(tween(180))) {
-            clarify?.let { ClarifyDock(it, actions.answerClarify) }
+            WideDock { clarify?.let { ClarifyDock(it, actions.answerClarify) } }
         }
         AnimatedVisibility(secret != null && approval == null && clarify == null,
             enter = slideInVertically(spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(),
             exit = slideOutVertically(tween(180)) { it } + fadeOut(tween(180))) {
-            secret?.let { SecretDock(it, actions.answerSecret) }
+            WideDock { secret?.let { SecretDock(it, actions.answerSecret) } }
         }
         SlashSuggestions(state, suggestions, actions.draft)
+        WideDock {
         Composer(state, catalog, model, reasoning, actions,
             onModel = { actions.loadModels(); modelSheet = true },
             onReasoning = { actions.loadModels(); reasoningSheet = true },
             onProject = if (state.sessionId == null && projects.isNotEmpty()) ({ projectSheet = true }) else null)
+        }
     }
     }
 
@@ -856,6 +858,20 @@ private fun choiceLabel(choice: String) =
     mapOf("once" to "Allow once", "session" to "Allow for session", "always" to "Always allow", "deny" to "Deny")[choice] ?: choice
 
 /** Sticky panel above the composer while a command waits for the user: big targets, no hunting. */
+/** Widest a dock or the composer gets on a tablet: a readable line, not the full pane. */
+internal val DOCK_MAX_WIDTH = 760.dp
+
+/**
+ * Keeps the approval/question docks and the composer at a readable width on wide screens (tablet,
+ * desktop window), centred under the chat; on a phone it is the full width as before.
+ */
+@Composable
+internal fun WideDock(content: @Composable () -> Unit) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
+        Box(Modifier.widthIn(max = DOCK_MAX_WIDTH).fillMaxWidth()) { content() }
+    }
+}
+
 @Composable
 private fun ApprovalDock(item: ChatItem.Approval, onApproval: (String) -> Unit) {
     val haptics = LocalHapticFeedback.current
