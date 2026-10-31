@@ -147,6 +147,7 @@ private fun DrawerMoreMenu(actions: SessionActions) {
             if (offer) item(if (upd!!.state.restartNeeded) "Restart PC bridge to load ${upd.state.latest}" else "Update PC bridge to ${upd.state.latest}", Glyphs.Download) { confirm = true }
             if (upd != null && upd.state.updating) item(upd.state.message ?: "Updating PC bridge…", Glyphs.Refresh) {}
             actions.openNotes?.let { item("Notes", Glyphs.Doc, it) }
+            actions.openLibrary?.let { item("Memory Library", Glyphs.Brain, it) }
             actions.openBridge?.let { item("PC bridge", Glyphs.Shield, it) }
             actions.openPc?.let { item("PC monitor", Glyphs.Chip, it) }
             actions.openTerminal?.let { item("Terminal", Glyphs.Terminal, it) }
@@ -190,6 +191,8 @@ class SessionActions(
     val openGraph: () -> Unit = {},
     /** Keep-style notes Hermes can read and edit; null when the bridge has none. */
     val openNotes: (() -> Unit)? = null,
+    /** The Memory Library page (bridge with the `library` feature). */
+    val openLibrary: (() -> Unit)? = null,
     /** Blueprints (null = the bridge has none): which projects have one, open, add, remove, trash. */
     val blueprints: BlueprintDrawerActions? = null,
     /** PC bridge admin page (doctor, restart, networks, devices). */

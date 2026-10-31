@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import io.github.nideta231.hermesremote.data.ChatGraph
 import io.github.nideta231.hermesremote.data.ChatGraphBuilder
 import io.github.nideta231.hermesremote.data.GraphKind
+import io.github.nideta231.hermesremote.data.GraphNode
 import io.github.nideta231.hermesremote.data.GraphOptions
 import io.github.nideta231.hermesremote.data.GraphSim
 import io.github.nideta231.hermesremote.data.ProjectRef
@@ -107,14 +108,20 @@ fun GraphScreen(sessions: List<SessionSummary>, projects: List<ProjectRef>, onOp
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 if (graph.nodes.isEmpty()) Text("No chats to map yet.", Modifier.align(Alignment.Center),
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                else GraphCanvas(graph, onOpenChat)
+                else {
+                    val chatColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
+                    GraphCanvas(graph, colorOf = { n -> when (n.kind) {
+                        GraphKind.PROJECT -> ProjectColor; GraphKind.TOPIC -> TopicColor; GraphKind.MODEL -> ModelColor; else -> chatColor } },
+                        kindLabel = { n -> when (n.kind) { GraphKind.CHAT -> "Chat"; GraphKind.PROJECT -> "Project"; GraphKind.TOPIC -> "Topic"; else -> "Model" } },
+                        openLabel = { n -> if (n.kind == GraphKind.CHAT) "Open" else null }, onOpen = { onOpenChat(it.ref) })
+                }
             }
         }
     }
 }
 
 @Composable
-private fun Legend(color: Color, label: String) {
+internal fun Legend(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(8.dp).background(color, CircleShape))
         Spacer(Modifier.width(6.dp))
@@ -122,10 +129,22 @@ private fun Legend(color: Color, label: String) {
     }
 }
 
+/**
+ * The force-laid-out map shared by the chat graph and the knowledge map. [colorOf] colours a dot,
+ * [sizeOf] scales it (1 = normal), [kindLabel] names it in the selection card, and [openLabel] (null: none)
+ * is the selection card's action, which calls [onOpen]. Leaves ([isLeaf]) show their label only zoomed in.
+ */
 @Composable
-private fun GraphCanvas(graph: ChatGraph, onOpenChat: (String) -> Unit) {
+internal fun GraphCanvas(
+    graph: ChatGraph,
+    colorOf: (GraphNode) -> Color,
+    kindLabel: (GraphNode) -> String,
+    openLabel: (GraphNode) -> String?,
+    onOpen: (GraphNode) -> Unit,
+    sizeOf: (GraphNode) -> Float = { 1f },
+    isLeaf: (GraphNode) -> Boolean = { it.kind == GraphKind.CHAT },
+) {
     val sim = remember(graph) { GraphSim(graph) }
-    val chatColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
     val accent = Gold
     val lineColor = MaterialTheme.colorScheme.onSurfaceVariant
     val labelColor = MaterialTheme.colorScheme.onSurface
@@ -133,7 +152,7 @@ private fun GraphCanvas(graph: ChatGraph, onOpenChat: (String) -> Unit) {
     val density = LocalDensity.current
     // Reveal order: hubs (projects/topics) first so chats have somewhere to fly to, then chats newest first.
     val order = remember(graph) {
-        graph.nodes.indices.sortedWith(compareBy<Int> { if (graph.nodes[it].kind == GraphKind.CHAT) 1 else 0 }
+        graph.nodes.indices.sortedWith(compareBy<Int> { if (isLeaf(graph.nodes[it])) 1 else 0 }
             .thenByDescending { graph.degree[it] }.thenByDescending { graph.nodes[it].at })
     }
     val revealAt = remember(graph) { LongArray(graph.nodes.size).also { r -> order.forEachIndexed { k, i -> r[i] = k * REVEAL_STEP_MS } } }
@@ -169,7 +188,7 @@ private fun GraphCanvas(graph: ChatGraph, onOpenChat: (String) -> Unit) {
         }
     }
 
-    val latestOpen by rememberUpdatedState(onOpenChat)
+    val latestOpen by rememberUpdatedState(onOpen)
     val hitR = with(density) { 22.dp.toPx() }
     fun toWorld(p: Offset): Offset = Offset((p.x - size.width / 2 - pan.x) / scale, (p.y - size.height / 2 - pan.y) / scale)
 
@@ -238,11 +257,10 @@ private fun GraphCanvas(graph: ChatGraph, onOpenChat: (String) -> Unit) {
                 val p = pop(i)
                 if (p <= 0f) continue
                 val node = graph.nodes[i]
-                val base = when (node.kind) { GraphKind.CHAT -> 3.2f; else -> 4.5f } + sqrt(graph.degree[i].toFloat()) * 1.4f
-                val r = base * density.density * p * scale.coerceIn(0.6f, 1.6f)
-                val color = when (node.kind) {
-                    GraphKind.CHAT -> chatColor; GraphKind.PROJECT -> ProjectColor; GraphKind.TOPIC -> TopicColor; GraphKind.MODEL -> ModelColor
-                }
+                val leaf = isLeaf(node)
+                val base = (if (leaf) 3.2f else 4.5f) + sqrt(graph.degree[i].toFloat()) * 1.4f
+                val r = base * sizeOf(node) * density.density * p * scale.coerceIn(0.6f, 1.6f)
+                val color = colorOf(node)
                 val dim = focus >= 0 && i != focus && i !in near
                 val alpha = (if (dim) 0.15f else 1f) * p.coerceAtMost(1f)
                 val c = Offset(sx(i), sy(i))
@@ -250,13 +268,13 @@ private fun GraphCanvas(graph: ChatGraph, onOpenChat: (String) -> Unit) {
                 drawCircle(color, r, c, alpha = alpha)
                 if (i == focus) drawCircle(accent, r + 2 * density.density, c, style = Stroke(1.5f * density.density))
                 // Labels: hubs always, chats once zoomed in, and the lit neighbourhood.
-                val showLabel = !dim && p >= 1f && (node.kind != GraphKind.CHAT && scale > 0.45f || scale > 1.25f || i == focus || i in near)
+                val showLabel = !dim && p >= 1f && (!leaf && scale > 0.45f || scale > 1.25f || i == focus || i in near)
                 if (showLabel) {
-                    val text = measurer.measure(node.label, TextStyle(color = labelColor, fontSize = if (node.kind == GraphKind.CHAT) 10.sp else 11.sp),
+                    val text = measurer.measure(node.label, TextStyle(color = labelColor, fontSize = if (leaf) 10.sp else 11.sp),
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                         constraints = Constraints(maxWidth = (160 * density.density).toInt()))
                     drawText(text, topLeft = Offset(c.x - text.size.width / 2, c.y + r + 3 * density.density),
-                        alpha = if (focus >= 0 || node.kind != GraphKind.CHAT) 0.95f else 0.7f)
+                        alpha = if (focus >= 0 || !leaf) 0.95f else 0.7f)
                 }
             }
         }
@@ -269,12 +287,10 @@ private fun GraphCanvas(graph: ChatGraph, onOpenChat: (String) -> Unit) {
                 Row(Modifier.padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f, fill = false)) {
                         Text(node.label, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text(when (node.kind) {
-                            GraphKind.CHAT -> "Chat"; GraphKind.PROJECT -> "Project"; GraphKind.TOPIC -> "Topic"; GraphKind.MODEL -> "Model"
-                        } + " · ${graph.degree[i]} links", style = MaterialTheme.typography.labelSmall,
+                        Text(kindLabel(node) + " · ${graph.degree[i]} links", style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    if (node.kind == GraphKind.CHAT) TextButton(onClick = { latestOpen(node.ref) }) { Text("Open") }
+                    openLabel(node)?.let { l -> TextButton(onClick = { latestOpen(node) }) { Text(l) } }
                     TextButton(onClick = { selected = -1 }) { Text("Close") }
                 }
             }

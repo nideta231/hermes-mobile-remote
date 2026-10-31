@@ -5,12 +5,18 @@ import kotlin.math.min
 import kotlin.math.sqrt
 import kotlin.random.Random
 
-enum class GraphKind { CHAT, PROJECT, TOPIC, MODEL }
+enum class GraphKind { CHAT, PROJECT, TOPIC, MODEL,
+    /** Knowledge map: a memory, a client, and the "everywhere" hub global memories hang off. */
+    MEMORY, CLIENT, GLOBAL }
 
 /** One dot. [ref] is the session id for a chat, the project id for a project, else the label. */
 data class GraphNode(val id: String, val kind: GraphKind, val label: String, val ref: String,
                      /** Chats: when it was last active (epoch s), for the reveal order. */
-                     val at: Double = 0.0)
+                     val at: Double = 0.0,
+                     /** Knowledge map: a memory's kind (mistake, rule...), which picks its colour. */
+                     val tag: String = "",
+                     /** Knowledge map: a memory's severity (1-5) or a hub's memory count; sizes the dot. */
+                     val weight: Int = 0)
 
 data class GraphEdge(val a: Int, val b: Int)
 

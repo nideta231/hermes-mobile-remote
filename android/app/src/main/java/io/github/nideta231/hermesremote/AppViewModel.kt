@@ -424,6 +424,9 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     /** Settings > PC: the bridge's health, and the profile's approval mode and default model. */
     val notes = io.github.nideta231.hermesremote.data.NotesRepo(viewModelScope, client = { client },
         describe = ::describe, say = { _toast.value = it })
+    /** The Memory Library page (Hermes' own memory on the PC), for the profile in use. */
+    val library = io.github.nideta231.hermesremote.data.LibraryRepo(viewModelScope, client = { client },
+        profile = { profileParam(profile) }, describe = ::describe, say = { _toast.value = it })
     val bridgeUpdate = io.github.nideta231.hermesremote.data.BridgeUpdater(viewModelScope, client = { client },
         describe = ::describe, say = { _toast.value = it }, onBridgeBack = ::bridgeBack)
 
@@ -1281,6 +1284,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         bridgeAdmin.clear()
         blueprints.clear()
         notes.clear()
+        library.clear()
         _features.value = emptySet()
         _claudeUsage.value = null
         _unauthorized.value = false

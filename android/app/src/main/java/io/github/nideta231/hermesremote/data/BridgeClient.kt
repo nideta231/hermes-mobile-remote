@@ -129,6 +129,34 @@ class BridgeClient(
     suspend fun updateNote(id: String, body: JSONObject) = call("PATCH", "/v1/notes/${enc(id)}", body = body)
     suspend fun deleteNote(id: String) = call("DELETE", "/v1/notes/${enc(id)}")
 
+    /** Memory Library (`/v1/library...`): Hermes' own memory provider on the PC. Older bridges answer 404. */
+    suspend fun library(profile: String?) = call("GET", "/v1/library", scoped(profile), readTimeoutS = 30)
+    suspend fun libraryInstall() = call("POST", "/v1/library/install", body = JSONObject().put("accept", true))
+    suspend fun libraryJob() = call("GET", "/v1/library/job")
+    suspend fun libraryEnable(switchProvider: Boolean, importMemory: Boolean, profile: String?) = call("POST", "/v1/library/enable", scoped(profile),
+        JSONObject().put("replace_custom", switchProvider).put("import_memory", importMemory), readTimeoutS = 90)
+    suspend fun libraryDisable(profile: String?) = call("POST", "/v1/library/disable", scoped(profile), readTimeoutS = 60)
+    suspend fun libraryDoctor(profile: String?) = call("GET", "/v1/library/doctor", scoped(profile), readTimeoutS = 60)
+    suspend fun libraryFix(action: String, profile: String?) = call("POST", "/v1/library/fix/${enc(action)}", scoped(profile), readTimeoutS = 120)
+    suspend fun librarySettings(body: JSONObject, profile: String?) = call("PUT", "/v1/library/settings", scoped(profile), body, readTimeoutS = 30)
+    suspend fun libraryMemories(f: LibraryFilter, profile: String?) = call("GET", "/v1/library/memories", mapOf(
+        "kind" to f.kind.ifBlank { null }, "scope" to f.scope.ifBlank { null }, "status" to f.status, "q" to f.query.ifBlank { null },
+        "min_severity" to f.minSeverity.takeIf { it > 1 }, "sort" to f.sort, "review" to f.review) + scoped(profile))
+    suspend fun libraryMemory(id: Long, profile: String?) = call("GET", "/v1/library/memories/$id", scoped(profile))
+    suspend fun libraryAdd(body: JSONObject, profile: String?) = call("POST", "/v1/library/memories", scoped(profile), body)
+    suspend fun libraryUpdate(id: Long, body: JSONObject, profile: String?) = call("PATCH", "/v1/library/memories/$id", scoped(profile), body)
+    suspend fun libraryBump(id: Long, profile: String?) = call("POST", "/v1/library/memories/$id/bump", scoped(profile))
+    suspend fun libraryDelete(id: Long, profile: String?) = call("DELETE", "/v1/library/memories/$id", scoped(profile))
+    suspend fun libraryMerge(keep: Long, drop: Long, profile: String?) = call("POST", "/v1/library/merge", scoped(profile),
+        JSONObject().put("keep", keep).put("drop", drop))
+    suspend fun libraryRecall(query: String, scopes: List<String>, profile: String?) = call("POST", "/v1/library/recall", scoped(profile),
+        JSONObject().put("query", query).put("scopes", org.json.JSONArray(scopes)))
+    suspend fun libraryStats(profile: String?) = call("GET", "/v1/library/stats", scoped(profile))
+    suspend fun libraryScopes() = call("GET", "/v1/library/scopes")
+    suspend fun libraryGraph(scope: String, kinds: List<String>, minSeverity: Int, chats: Boolean, profile: String?) = call("GET", "/v1/library/graph",
+        mapOf("scope" to scope.ifBlank { null }, "kinds" to kinds.joinToString(",").ifBlank { null },
+            "min_severity" to minSeverity.takeIf { it > 1 }, "chats" to chats.takeIf { it }) + scoped(profile))
+
     /** PC bridge admin (`/v1/admin/...`): doctor with fixes, restart, networks, devices, log. */
     suspend fun adminDoctor() = call("GET", "/v1/admin/doctor", readTimeoutS = 30)
     suspend fun adminFix(fix: String) = call("POST", "/v1/admin/fix/${enc(fix)}", readTimeoutS = 60)

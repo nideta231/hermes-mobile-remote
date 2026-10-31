@@ -44,6 +44,8 @@ class BridgeAdminActions(
     val update: BridgeUpdateActions? = null,
     /** Tailscale Funnel controls (null when the bridge has none). */
     val funnel: FunnelActions? = null,
+    /** Memory Library setup: install, on/off, doctor (null when the bridge has none). */
+    val openLibrary: (() -> Unit)? = null,
 )
 
 class FunnelActions(
@@ -135,6 +137,12 @@ fun BridgeAdminScreen(state: BridgeAdminState, actions: BridgeAdminActions, onBa
                             else if (s.available && s.canUpdate) TextButton(onClick = { if (heldWork != null) confirmUpdate = true else u.start() }) { Text(if (s.restartNeeded) "Restart" else "Update") }
                         }
                     }
+                }
+            }
+
+            actions.openLibrary?.let { open ->
+                SettingsSection("Memory Library", "Hermes' own long-term memory on this PC: install, switch on per profile, doctor.") {
+                    Panel { PanelRow("Memory Library", "Setup, on/off and health checks", Glyphs.Brain, onClick = open) }
                 }
             }
 

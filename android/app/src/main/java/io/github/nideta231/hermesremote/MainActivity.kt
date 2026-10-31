@@ -114,10 +114,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Chat is home; the others are pages pushed on top of it. */
-enum class Page { CHAT, SCHEDULED, PC, TERMINAL, VAULT, GRAPH, NOTES, BRIDGE, BLUEPRINT, SETTINGS }
+enum class Page { CHAT, SCHEDULED, PC, TERMINAL, VAULT, GRAPH, NOTES, LIBRARY, BRIDGE, BLUEPRINT, SETTINGS }
 
 /** Pages that need the fingerprint/PIN unlock when the phone reaches the PC over Tailscale Funnel. */
-private val FUNNEL_LOCKED = setOf(Page.SCHEDULED, Page.PC, Page.TERMINAL, Page.VAULT, Page.NOTES, Page.BRIDGE)
+private val FUNNEL_LOCKED = setOf(Page.SCHEDULED, Page.PC, Page.TERMINAL, Page.VAULT, Page.NOTES, Page.LIBRARY, Page.BRIDGE)
 
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels()
@@ -381,6 +381,9 @@ class MainActivity : ComponentActivity() {
         val pcState by vm.monitor.state.collectAsState()
         val bridgeUpdateState by vm.bridgeUpdate.state.collectAsState()
         val notesState by vm.notes.state.collectAsState()
+        val libraryState by vm.library.state.collectAsState()
+        // Which Library tab to open: the PC bridge page's entry goes straight to Setup.
+        var libraryTab by remember { mutableStateOf(0) }
         val bridgeAdminState by vm.bridgeAdmin.state.collectAsState()
         val heldUpdate = io.github.nideta231.hermesremote.data.ParkedSockets.confirmText(bridgeAdminState.parked,
             bridgeAdminState.parkedSupported, io.github.nideta231.hermesremote.data.HeldAction.Update)
@@ -478,6 +481,7 @@ class MainActivity : ComponentActivity() {
             openVault = { go(Page.VAULT) },
             openGraph = { go(Page.GRAPH) },
             openNotes = if ("notes" in features) ({ go(Page.NOTES) }) else null,
+            openLibrary = if ("library" in features) ({ libraryTab = 0; go(Page.LIBRARY) }) else null,
             openBridge = if ("admin" in features) ({ go(Page.BRIDGE) }) else null,
             blueprints = if ("blueprints" in features) BlueprintDrawerActions(have = blueprintState.have.keys,
                 needsYou = blueprintState.have.values.filter { it.needsYou > 0 || vm.blueprints.seen?.projectUnread(it.projectId, it.latest) == true }
@@ -571,6 +575,7 @@ class MainActivity : ComponentActivity() {
                             fix = vm.bridgeAdmin::fix, restart = vm.bridgeAdmin::restart, trust = vm.bridgeAdmin::trustCurrent,
                             untrust = vm.bridgeAdmin::untrust, revoke = vm.bridgeAdmin::revoke, loadLogs = vm.bridgeAdmin::loadLogs,
                             update = if ("bridge_update" in features) BridgeUpdateActions(bridgeUpdateState, vm.bridgeUpdate::check, vm.bridgeUpdate::start, heldUpdate, vm.bridgeAdmin::refresh) else null,
+                            openLibrary = if ("library" in features) ({ libraryTab = 3; page = Page.LIBRARY }) else null,
                             funnel = if ("funnel" in features) io.github.nideta231.hermesremote.ui.FunnelActions(set = vm.bridgeAdmin::setFunnel,
                                 remove = vm.bridgeAdmin::removeFunnel, allowThis = vm::allowFunnel, leaveThis = vm::leaveFunnel,
                                 overFunnel = conn.transport == io.github.nideta231.hermesremote.data.Transport.FUNNEL) else null),
@@ -581,8 +586,15 @@ class MainActivity : ComponentActivity() {
                             closed = vm.notes::closed, opened = { vm.notes.editing = it }, archive = vm.notes::setArchived, delete = { vm.notes.delete(it) },
                             askHermes = { n -> vm.newChat(); vm.setDraft("Look at my note \"${n.title.ifBlank { n.id }}\" (id ${n.id}, personal-notes skill) and ") ; page = Page.CHAT }),
                             onBack = { page = Page.CHAT })
-                        Page.GRAPH -> GraphScreen(sessions.items, sessions.projects, onOpenChat = { vm.openSession(it); page = Page.CHAT },
+                        // With the Memory Library the Graph is the knowledge map; the chat map stays for bridges without it.
+                        Page.GRAPH -> if ("library" in features) io.github.nideta231.hermesremote.ui.KnowledgeMapScreen(libraryState, vm.library,
+                            openChat = { vm.openSession(it); page = Page.CHAT }, openSetup = { libraryTab = 3; page = Page.LIBRARY },
                             onBack = { page = Page.CHAT })
+                        else GraphScreen(sessions.items, sessions.projects, onOpenChat = { vm.openSession(it); page = Page.CHAT },
+                            onBack = { page = Page.CHAT })
+                        Page.LIBRARY -> io.github.nideta231.hermesremote.ui.LibraryScreen(libraryState,
+                            io.github.nideta231.hermesremote.ui.LibraryActions(vm.library, models, vm::loadModels,
+                                openChat = { vm.openSession(it); page = Page.CHAT }), startTab = libraryTab, onBack = { page = Page.CHAT })
                         Page.VAULT -> VaultScreen(vaultState, VaultActions(refresh = vm.vault::refresh, save = vm.vault::save,
                             remove = vm.vault::remove), onBack = { page = Page.SETTINGS })
                         Page.SETTINGS -> SettingsScreen(system, pairing, conn, update, settingsActions, onBack = { page = Page.CHAT }, models = models)
