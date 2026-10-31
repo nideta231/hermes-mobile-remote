@@ -194,10 +194,46 @@ def extract_runtime(p: ls.Paths) -> None:
     shutil.rmtree(scratch, ignore_errors=True)
     r = subprocess.run([str(p.pg0), "start", "--name", "extract", "-p", str(_free_port()), "-d", str(scratch),
                         "-c", f"unix_socket_directories={p.run}"], env=env, capture_output=True, text=True, timeout=180)
+    pid = _postmaster_pid(scratch)
+    subprocess.run([str(p.pg0), "stop", "--name", "extract"], env=env, capture_output=True, timeout=60)
     subprocess.run([str(p.pg0), "drop", "--name", "extract"], env=env, capture_output=True, timeout=60)
+    _wait_gone(pid)  # this throwaway server listened on a localhost port: never leave it running
     shutil.rmtree(scratch, ignore_errors=True)
     if not (p.install / "bin" / "postgres").exists():
         raise RuntimeError("Could not unpack the database runtime: " + (r.stderr or r.stdout).strip()[-300:])
+
+
+def _postmaster_pid(data_dir: Path) -> int | None:
+    try:
+        return int((data_dir / "postmaster.pid").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _wait_gone(pid: int | None, timeout: float = 15) -> None:
+    """Wait for a Postgres server to exit; stop it (fast shutdown, then kill) when it doesn't."""
+    if not pid:
+        return
+    import signal
+
+    def alive() -> bool:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    for sig, wait in ((None, timeout), (signal.SIGINT, 10), (signal.SIGKILL, 5)):
+        if sig is not None and alive():
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                return
+        deadline = time.monotonic() + wait
+        while alive() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        if not alive():
+            return
 
 
 def init_cluster(p: ls.Paths) -> None:

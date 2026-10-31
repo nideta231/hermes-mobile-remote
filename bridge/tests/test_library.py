@@ -82,6 +82,24 @@ def test_unit_name_differs_per_data_folder(tmp_path):
     assert ls.unit_name(a).startswith(ls.UNIT + "-")
 
 
+def test_wait_gone_stops_a_leftover_server(tmp_path):
+    import subprocess, time
+    # Detached like pg0's server (not our child, so no zombie): the shell exits and the sleeper is reparented.
+    pid = int(subprocess.run(["sh", "-c", "sleep 60 >/dev/null 2>&1 & echo $!"], capture_output=True, text=True).stdout)
+    (tmp_path / "postmaster.pid").write_text(f"{pid}\n/data\n")
+    assert lib._postmaster_pid(tmp_path) == pid
+    start = time.monotonic()
+    lib._wait_gone(pid, timeout=0.3)  # still alive after the wait: interrupted, then killed
+    time.sleep(0.5)
+    try:
+        os.kill(pid, 0)
+        gone = False
+    except OSError:
+        gone = True
+    assert gone and time.monotonic() - start < 20  # sh ignores SIGINT for background jobs: SIGKILL ends it
+    assert lib._postmaster_pid(tmp_path / "missing") is None
+
+
 def test_split_entries_on_section_signs():
     assert lib.split_entries("one\n§\ntwo\nlines\n§\n\n") == ["one", "two\nlines"]
 
