@@ -13,6 +13,8 @@ os.environ["HERMES_HOME"] = os.path.join(_ROOT, "hermes")
 # Tests predate the Additional features switches: start with every extra on (test_extras covers off).
 import json as _json  # noqa: E402
 
-os.makedirs(os.path.join(_ROOT, "config", "hermes-remote"), exist_ok=True)
-with open(os.path.join(_ROOT, "config", "hermes-remote", "extras.json"), "w") as _fh:
+from hermes_remote_bridge.config import CONFIG_DIR as _CONFIG_DIR  # noqa: E402  (after the env above)
+
+os.makedirs(_CONFIG_DIR, exist_ok=True)
+with open(os.path.join(_CONFIG_DIR, "extras.json"), "w") as _fh:
     _json.dump({k: True for k in ("library", "monitor", "terminal", "notes", "blueprints", "graph")}, _fh)

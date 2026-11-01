@@ -118,8 +118,9 @@ def test_cli_refuses_commands_of_an_off_feature_and_switches(tmp_path, monkeypat
     from hermes_remote_bridge import cli
 
     conf = tmp_path / "config.toml"
-    conf.write_text(f'extras_file = "{tmp_path / "x.json"}"\nnotes_dir = "{tmp_path / "n"}"\nblueprints_dir = "{tmp_path / "b"}"\n'
-                    f'library_dir = "{tmp_path / "l"}"\nhermes_home = "{tmp_path / "h"}"\n')
+    # TOML literal strings ('...'): Windows paths have backslashes.
+    conf.write_text("".join(f"{k} = '{tmp_path / v}'\n" for k, v in
+                            (("extras_file", "x.json"), ("notes_dir", "n"), ("blueprints_dir", "b"), ("library_dir", "l"), ("hermes_home", "h"))))
     monkeypatch.setattr(ex, "sync_skills", lambda *a: [])
     with pytest.raises(SystemExit) as exc:
         cli.main(["--config", str(conf), "notes", "list"])
