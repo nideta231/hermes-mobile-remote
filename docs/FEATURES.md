@@ -66,6 +66,9 @@ open chat, exactly like the desktop's picker; it does not change your global def
 
 ## Additional features
 
+Settings is split into tabs: PC, App, Features, About. A feature's own settings (e.g. Blueprint
+boards defaults and agent instructions) show in the Features tab only while it is switched on.
+
 Settings > *Additional features* has one switch each for the Memory Library, PC monitor,
 Terminal, Notes, Blueprints and Graph. All are off on a fresh install, so the app starts as chat
 only. Off hides the page from the ⋮ menu (Blueprints also hides the drawer's board icons, badges

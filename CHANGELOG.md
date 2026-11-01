@@ -17,6 +17,15 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## v1.48.0
+
+- **Settings in tabs**: *PC* (connection, Hermes, default model, approvals, vault), *App* (look,
+  background, chat list), *Features* (the Additional features switches and their settings) and
+  *About* (version, changelog, this device), instead of one long page.
+- A feature's own settings show only while it is switched on: *Blueprint boards* defaults and agent
+  instructions appear under Features once Blueprints is on. A board's *Global board settings* link
+  opens that tab.
+
 ## v1.47.0
 
 - **Off is off on the PC too** (needs the updated bridge): the switches live on the PC, so the PC

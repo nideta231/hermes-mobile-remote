@@ -404,6 +404,7 @@ class MainActivity : ComponentActivity() {
         var changelogSheet by rememberSaveable { mutableStateOf(false) }
 
         var page by rememberSaveable { mutableStateOf(Page.CHAT) }
+        var settingsTab by rememberSaveable { mutableStateOf(0) }
         val drawer = rememberDrawerState(DrawerValue.Closed)
         val scope = rememberCoroutineScope()
         val snack = rememberAppSnackbar()
@@ -575,7 +576,7 @@ class MainActivity : ComponentActivity() {
                                 fetchFile = vm.blueprints::file, fileInfo = vm.blueprints::fileInfo,
                                 unread = { c -> seenTick.let { vm.blueprints.seen?.unread(pid, c) ?: 0 } },
                                 markSeen = { c -> vm.blueprints.markSeen(pid, c) },
-                                openGlobalSettings = { vm.blueprints.refreshList(); page = Page.SETTINGS },
+                                openGlobalSettings = { vm.blueprints.refreshList(); settingsTab = io.github.nideta231.hermesremote.ui.SETTINGS_TAB_FEATURES; page = Page.SETTINGS },
                                 upload = vm::uploadBlueprintFile,
                                 resolved = { b, c, m -> vm.blueprintResolved(b, c, m) },
                                 answered = { b, c, m, a -> vm.blueprintAnswered(b, c, m, a) }),
@@ -607,7 +608,7 @@ class MainActivity : ComponentActivity() {
                                 openChat = { vm.openSession(it); page = Page.CHAT }), startTab = libraryTab, onBack = { page = Page.CHAT })
                         Page.VAULT -> VaultScreen(vaultState, VaultActions(refresh = vm.vault::refresh, save = vm.vault::save,
                             remove = vm.vault::remove), onBack = { page = Page.SETTINGS })
-                        Page.SETTINGS -> SettingsScreen(system, pairing, conn, update, settingsActions, onBack = { page = Page.CHAT }, models = models)
+                        Page.SETTINGS -> SettingsScreen(system, pairing, conn, update, settingsActions, onBack = { settingsTab = 0; page = Page.CHAT }, models = models, startTab = settingsTab)
                     }
                 }
                 SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 72.dp))

@@ -1085,9 +1085,11 @@ fun SettingsScreen(
     actions: SettingsActions,
     onBack: (() -> Unit)?,
     models: ModelCatalog? = null,
+    startTab: Int = 0,
 ) {
     var confirmUnpair by remember { mutableStateOf(false) }
     var modelSheet by remember { mutableStateOf(false) }
+    var tab by rememberSaveable(startTab) { mutableStateOf(startTab) }
     val hidden = LocalHiddenFeatures.current
     LaunchedEffect(Unit) { actions.refresh() }
     PageScaffold("Settings", onBack) {
@@ -1095,86 +1097,101 @@ fun SettingsScreen(
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 4.dp)) {
                 UpdateBanner(update, actions.openUpdate)
-                // The bridge's status card, transport choice, approvals and default model are bridge routes.
-                val bridgeCard = HostFeature.BRIDGE_STATUS !in hidden
-                if (bridgeCard) SettingsSection("Connection", "How this phone reaches your PC.") {
-                    ConnectionPanel(conn, state.error, actions)
-                }
-                SettingsSection("Hermes on your PC", "Shared with the desktop app and messaging.") {
-                    StatusPanel(state)
-                    if (bridgeCard) actions.bridgeUpdate?.let { BridgeUpdatePanel(it) }
-                    if (bridgeCard) actions.openBridge?.let { open ->
-                        Spacer(Modifier.size(10.dp))
-                        Panel { PanelRow("PC bridge", "Health check and fixes, restart, trusted networks, paired devices, log", Glyphs.Shield, onClick = open) }
-                    }
-                    if (bridgeCard) {
-                        Spacer(Modifier.size(10.dp))
-                        DefaultModelPanel(state, models) { actions.loadModels(); modelSheet = true }
-                        Spacer(Modifier.size(10.dp))
-                        ApprovalPanel(state, actions.setApprovalMode)
-                    }
-                    // Vault is Hermes' own vault.* RPC over the live socket, so a gateway host has it too.
-                    Spacer(Modifier.size(10.dp))
-                    Panel {
-                        PanelRow("Vault", "Saved logins, cards and addresses Hermes can fill", Glyphs.Shield, onClick = actions.openVault)
-                    }
-                }
-                SettingsSection("Appearance", "Only changes this phone.") {
-                    ThemePanel()
-                    Spacer(Modifier.size(10.dp))
-                    LayoutPanel()
-                }
-                SettingsSection("Additional features", if (actions.extrasOnPc)
-                    "Off until you turn them on. Off means off on the PC too: nothing is monitored or run, and Hermes doesn't use it."
-                    else "Off until you turn them on. This PC's bridge is older: off only hides them on this phone (update the PC bridge to stop them there too).") {
-                    ExtraFeaturesPanel(actions.extrasServed, actions.setExtra)
-                }
-                SettingsSection("Background", "What happens when you close or swipe away the app.") {
-                    KeepAlivePanel()
-                }
-                SettingsSection("Chat list", "How the drawer lists your chats.") {
-                    DrawerPanel()
-                }
-                actions.boardDefaults?.let { d ->
-                    SettingsSection("Blueprint boards", "Every project's board on this PC, unless that board chose otherwise (board ⋮ > Board settings). Hermes follows them too.") {
-                        Panel {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                BoardSettingsFields(d, null, actions.setBoardDefaults)
-                            }
+                // Tabs instead of one long page; a feature's own settings show only while it is switched on.
+                Segmented(SETTINGS_TABS, tab, SETTINGS_TABS.map { true }, onSelect = { tab = it }, modifier = Modifier.padding(top = 8.dp))
+                when (tab) {
+                    0 -> {
+                        // The bridge's status card, transport choice, approvals and default model are bridge routes.
+                        val bridgeCard = HostFeature.BRIDGE_STATUS !in hidden
+                        if (bridgeCard) SettingsSection("Connection", "How this phone reaches your PC.") {
+                            ConnectionPanel(conn, state.error, actions)
                         }
-                        actions.boardInstructions?.let { g ->
+                        SettingsSection("Hermes on your PC", "Shared with the desktop app and messaging.") {
+                            StatusPanel(state)
+                            if (bridgeCard) actions.bridgeUpdate?.let { BridgeUpdatePanel(it) }
+                            if (bridgeCard) actions.openBridge?.let { open ->
+                                Spacer(Modifier.size(10.dp))
+                                Panel { PanelRow("PC bridge", "Health check and fixes, restart, trusted networks, paired devices, log", Glyphs.Shield, onClick = open) }
+                            }
+                            if (bridgeCard) {
+                                Spacer(Modifier.size(10.dp))
+                                DefaultModelPanel(state, models) { actions.loadModels(); modelSheet = true }
+                                Spacer(Modifier.size(10.dp))
+                                ApprovalPanel(state, actions.setApprovalMode)
+                            }
+                            // Vault is Hermes' own vault.* RPC over the live socket, so a gateway host has it too.
                             Spacer(Modifier.size(10.dp))
-                            GlobalInstructionsPanel(g, actions.setBoardInstructions)
-                        }
-                    }
-                }
-                SettingsSection("About") {
-                    Panel {
-                        PanelRow("App version", update.installed.ifBlank { "?" }, Glyphs.Download, onClick = actions.checkUpdate) {
-                            when {
-                                update.checking -> TypingDots()
-                                update.available != null -> Pill("Update", tint = MaterialTheme.colorScheme.onPrimary, container = Gold, onClick = actions.openUpdate)
-                                update.checkedAt != null -> Text("Up to date", style = MaterialTheme.typography.labelMedium, color = Ok)
-                                else -> Text("Check", style = MaterialTheme.typography.labelMedium, color = Gold)
+                            Panel {
+                                PanelRow("Vault", "Saved logins, cards and addresses Hermes can fill", Glyphs.Shield, onClick = actions.openVault)
                             }
                         }
-                        update.error?.let {
-                            Text(it, style = MaterialTheme.typography.bodySmall, color = Bad, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                        }
-                        PanelDivider()
-                        PanelRow("Changelog", "What changed in every version", Glyphs.Doc, onClick = actions.openChangelog)
                     }
-                }
-                SettingsSection("This device") {
-                    Panel {
-                        pairing?.let {
-                            PanelRow("Paired as “${it.device}”", it.url, Glyphs.Qr)
-                            PanelDivider()
-                            PanelRow("Re-pair this PC", "Pairing broken or revoked? Scan a fresh code; chats and drafts stay",
-                                Glyphs.Refresh, iconTint = Gold, onClick = actions.repair)
-                            PanelDivider()
+                    1 -> {
+                        SettingsSection("Appearance", "Only changes this phone.") {
+                            ThemePanel()
+                            Spacer(Modifier.size(10.dp))
+                            LayoutPanel()
                         }
-                        PanelRow("Unpair this device", "Signs this phone out of your PC", icon = Glyphs.Close, iconTint = Bad, titleColor = Bad, onClick = { confirmUnpair = true })
+                        SettingsSection("Background", "What happens when you close or swipe away the app.") {
+                            KeepAlivePanel()
+                        }
+                        SettingsSection("Chat list", "How the drawer lists your chats.") {
+                            DrawerPanel()
+                        }
+                    }
+                    2 -> {
+                        SettingsSection("Additional features", if (actions.extrasOnPc)
+                            "Off until you turn them on. Off means off on the PC too: nothing is monitored or run, and Hermes doesn't use it."
+                            else "Off until you turn them on. This PC's bridge is older: off only hides them on this phone (update the PC bridge to stop them there too).") {
+                            ExtraFeaturesPanel(actions.extrasServed, actions.setExtra)
+                        }
+                        actions.boardDefaults?.takeIf { io.github.nideta231.hermesremote.data.ExtraFeatures.isOn(io.github.nideta231.hermesremote.data.Extra.BLUEPRINTS) }?.let { d ->
+                            SettingsSection("Blueprint boards", "Every project's board on this PC, unless that board chose otherwise (board ⋮ > Board settings). Hermes follows them too.") {
+                                Panel {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        BoardSettingsFields(d, null, actions.setBoardDefaults)
+                                    }
+                                }
+                                actions.boardInstructions?.let { g ->
+                                    Spacer(Modifier.size(10.dp))
+                                    GlobalInstructionsPanel(g, actions.setBoardInstructions)
+                                }
+                            }
+                        }
+                        if (io.github.nideta231.hermesremote.data.ExtraFeatures.enabled.isEmpty()) Text(
+                            "Switch a feature on to see its settings here.", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp, top = 12.dp))
+                    }
+                    else -> {
+                        SettingsSection("About") {
+                            Panel {
+                                PanelRow("App version", update.installed.ifBlank { "?" }, Glyphs.Download, onClick = actions.checkUpdate) {
+                                    when {
+                                        update.checking -> TypingDots()
+                                        update.available != null -> Pill("Update", tint = MaterialTheme.colorScheme.onPrimary, container = Gold, onClick = actions.openUpdate)
+                                        update.checkedAt != null -> Text("Up to date", style = MaterialTheme.typography.labelMedium, color = Ok)
+                                        else -> Text("Check", style = MaterialTheme.typography.labelMedium, color = Gold)
+                                    }
+                                }
+                                update.error?.let {
+                                    Text(it, style = MaterialTheme.typography.bodySmall, color = Bad, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                                }
+                                PanelDivider()
+                                PanelRow("Changelog", "What changed in every version", Glyphs.Doc, onClick = actions.openChangelog)
+                            }
+                        }
+                        SettingsSection("This device") {
+                            Panel {
+                                pairing?.let {
+                                    PanelRow("Paired as “${it.device}”", it.url, Glyphs.Qr)
+                                    PanelDivider()
+                                    PanelRow("Re-pair this PC", "Pairing broken or revoked? Scan a fresh code; chats and drafts stay",
+                                        Glyphs.Refresh, iconTint = Gold, onClick = actions.repair)
+                                    PanelDivider()
+                                }
+                                PanelRow("Unpair this device", "Signs this phone out of your PC", icon = Glyphs.Close, iconTint = Bad, titleColor = Bad, onClick = { confirmUnpair = true })
+                            }
+                        }
                     }
                 }
                 Spacer(Modifier.size(24.dp))
@@ -1558,6 +1575,9 @@ private fun KeepAlivePanel() {
         }
     }
 }
+
+private val SETTINGS_TABS = listOf("PC", "App", "Features", "About")
+const val SETTINGS_TAB_FEATURES = 2
 
 /** A titled settings group: header, one-line hint, then its panels, with even spacing between groups. */
 @Composable
