@@ -1,5 +1,7 @@
 package io.github.nideta231.hermesremote
 
+import io.github.nideta231.hermesremote.data.Extra
+import io.github.nideta231.hermesremote.data.ExtraFeatures
 import android.app.Application
 import android.content.Context
 import android.net.ConnectivityManager
@@ -625,7 +627,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         usageJob = viewModelScope.launch {
             while (true) {
                 val c = client
-                if (c != null && "monitor" in _features.value) {
+                if (c != null && "monitor" in _features.value && ExtraFeatures.isOn(Extra.PC_MONITOR)) {
                     runCatching { c.claudeUsage() }.getOrNull()?.let { u -> if (u.hasNumbers) _claudeUsage.value = u }
                 }
                 delay(if (_claudeUsage.value == null) 10_000 else 60_000)
@@ -916,7 +918,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                 if (!f.optBoolean("allowed") && _pairing.value?.funnelKey != null && _conn.value.transport != Transport.FUNNEL) forgetFunnel()
             }
             if ("bridge_update" in features) bridgeUpdate.check(false)
-            if ("blueprints" in features) { blueprints.refreshList(); blueprints.watch() }
+            if ("blueprints" in features) { if (ExtraFeatures.isOn(Extra.BLUEPRINTS)) blueprints.refreshList(); blueprints.watch() }
             if (me.optInt("protocol", 0) < MIN_BRIDGE_PROTOCOL) {
                 _toast.value = "Your PC runs an older bridge. Update it: run install.sh on the PC."
             }

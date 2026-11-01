@@ -17,6 +17,15 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## v1.46.0
+
+- **Settings > Additional features**: Memory Library, PC monitor, Terminal, Notes, Blueprints and
+  Graph each have their own switch and are **off by default**, so the app starts as a plain chat.
+  Turn on what you use. Off removes the page from the ⋮ menu (and the drawer's blueprint icons and
+  the Claude usage ring) and stops its background checks; nothing on the PC changes. After updating,
+  switch back on whatever you were using. A feature your PC bridge doesn't serve shows *Not on this
+  PC*.
+
 ## v1.45.0
 
 - **Memory Library** (needs the updated bridge; Linux PCs): Hermes' own long-term memory on a private

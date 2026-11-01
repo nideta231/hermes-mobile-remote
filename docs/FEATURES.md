@@ -64,6 +64,15 @@ open chat, exactly like the desktop's picker; it does not change your global def
 
 **Reasoning effort.** Off, Minimal, Low, Medium, High, Extra high or Max, set on the open chat.
 
+## Additional features
+
+Settings > *Additional features* has one switch each for the Memory Library, PC monitor,
+Terminal, Notes, Blueprints and Graph. All are off on a fresh install, so the app starts as chat
+only. Off hides the page from the ⋮ menu (Blueprints also hides the drawer's board icons, badges
+and board notifications; PC monitor also hides the Claude usage ring) and stops that feature's
+polling. The switches are stored on the phone, not the PC; a feature the PC bridge doesn't serve
+shows *Not on this PC* and can't be switched on.
+
 ## PC monitor, terminal and widgets
 
 This replaces the separate PC Glance app and agent; uninstall them once this is set up.

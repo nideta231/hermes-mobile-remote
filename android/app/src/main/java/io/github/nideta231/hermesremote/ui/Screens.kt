@@ -151,7 +151,7 @@ private fun DrawerMoreMenu(actions: SessionActions) {
             actions.openBridge?.let { item("PC bridge", Glyphs.Shield, it) }
             actions.openPc?.let { item("PC monitor", Glyphs.Chip, it) }
             actions.openTerminal?.let { item("Terminal", Glyphs.Terminal, it) }
-            item("Graph", Glyphs.Graph, actions.openGraph)
+            actions.openGraph?.let { item("Graph", Glyphs.Graph, it) }
         }
     }
 }
@@ -187,8 +187,8 @@ class SessionActions(
     val switchProfile: (String) -> Unit = {},
     val openScheduled: () -> Unit = {},
     val openVault: () -> Unit = {},
-    /** The Obsidian-style map of chats, projects and topics. */
-    val openGraph: () -> Unit = {},
+    /** The Obsidian-style map of chats, projects and topics; null when switched off. */
+    val openGraph: (() -> Unit)? = null,
     /** Keep-style notes Hermes can read and edit; null when the bridge has none. */
     val openNotes: (() -> Unit)? = null,
     /** The Memory Library page (bridge with the `library` feature). */
@@ -1068,6 +1068,8 @@ class SettingsActions(
     /** Global agent instructions on this PC; null when the bridge has none (older, or blueprints off). */
     val boardInstructions: String? = null,
     val setBoardInstructions: (String) -> Unit = {},
+    /** Additional features this PC can serve (the others show "Not on this PC"). */
+    val extrasServed: Set<io.github.nideta231.hermesremote.data.Extra> = io.github.nideta231.hermesremote.data.Extra.entries.toSet(),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1118,6 +1120,9 @@ fun SettingsScreen(
                     ThemePanel()
                     Spacer(Modifier.size(10.dp))
                     LayoutPanel()
+                }
+                SettingsSection("Additional features", "Extra pages, off until you turn them on. Off hides them from the menu and stops their checks.") {
+                    ExtraFeaturesPanel(actions.extrasServed)
                 }
                 SettingsSection("Background", "What happens when you close or swipe away the app.") {
                     KeepAlivePanel()
@@ -1503,6 +1508,21 @@ private fun LayoutPanel() {
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             androidx.compose.material3.Switch(!ThemePrefs.sidebarHidden, { ThemePrefs.pickSidebarHidden(!it) })
+        }
+    }
+}
+
+/** One switch per [io.github.nideta231.hermesremote.data.Extra]; a feature the PC doesn't serve says so instead. */
+@Composable
+private fun ExtraFeaturesPanel(served: Set<io.github.nideta231.hermesremote.data.Extra>) {
+    val extras = io.github.nideta231.hermesremote.data.ExtraFeatures
+    Panel {
+        io.github.nideta231.hermesremote.data.Extra.entries.forEachIndexed { i, e ->
+            if (i > 0) PanelDivider()
+            val here = e in served
+            PanelRow(e.label, if (here) e.description else "${e.description}. Not on this PC (update the PC bridge).") {
+                androidx.compose.material3.Switch(extras.isOn(e), { extras.set(e, it) }, enabled = here)
+            }
         }
     }
 }

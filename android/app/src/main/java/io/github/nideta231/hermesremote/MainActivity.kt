@@ -221,6 +221,7 @@ class MainActivity : ComponentActivity() {
         // Upgrades never pass through pairing, so ask here too. Android stops prompting after two declines.
         if (vm.pairing.value != null) askForNotifications()
         ThemePrefs.init(this)
+        io.github.nideta231.hermesremote.data.ExtraFeatures.init(this)
         setContent {
             val dark = ThemePrefs.mode.isDark(androidx.compose.foundation.isSystemInDarkTheme())
             LaunchedEffect(dark) {
@@ -391,7 +392,12 @@ class MainActivity : ComponentActivity() {
         val seenTick by vm.blueprints.seenTick.collectAsState()
         var blueprintProject by rememberSaveable { mutableStateOf<String?>(null) }
         var blueprintName by rememberSaveable { mutableStateOf("") }
-        val features by vm.features.collectAsState()
+        val bridgeFeatures by vm.features.collectAsState()
+        // Optional pages the user left off in Settings > Additional features act as if the bridge lacked them.
+        val features = io.github.nideta231.hermesremote.data.ExtraFeatures.gate(bridgeFeatures)
+        val graphOn = io.github.nideta231.hermesremote.data.ExtraFeatures.isOn(io.github.nideta231.hermesremote.data.Extra.GRAPH)
+        val blueprintsOn = "blueprints" in features
+        LaunchedEffect(blueprintsOn) { if (blueprintsOn) vm.blueprints.refreshList() }
         val unauthorized by vm.unauthorized.collectAsState()
         val pendingShare by vm.pendingShare.collectAsState()
         var updateSheet by rememberSaveable { mutableStateOf(false) }
@@ -446,7 +452,7 @@ class MainActivity : ComponentActivity() {
         }
         val gatewayHost by vm.gatewayHost.collectAsState()
         // A gateway host has no bridge monitor, but Hermes serves its own basic stats.
-        val hasMonitor = "monitor" in features || gatewayHost != null
+        val hasMonitor = "monitor" in features || (gatewayHost != null && io.github.nideta231.hermesremote.data.ExtraFeatures.isOn(io.github.nideta231.hermesremote.data.Extra.PC_MONITOR))
         val hasTerminal = "terminal" in features
 
         val projectActions = remember(vm) {
@@ -479,7 +485,7 @@ class MainActivity : ComponentActivity() {
             switchProfile = { vm.switchProfile(it); go(Page.CHAT) },
             openScheduled = { go(Page.SCHEDULED) },
             openVault = { go(Page.VAULT) },
-            openGraph = { go(Page.GRAPH) },
+            openGraph = if (graphOn) ({ go(Page.GRAPH) }) else null,
             openNotes = if ("notes" in features) ({ go(Page.NOTES) }) else null,
             openLibrary = if ("library" in features) ({ libraryTab = 0; go(Page.LIBRARY) }) else null,
             openBridge = if ("admin" in features) ({ go(Page.BRIDGE) }) else null,
@@ -527,6 +533,7 @@ class MainActivity : ComponentActivity() {
             setBoardDefaults = vm.blueprints::setDefaults,
             boardInstructions = if ("blueprints" in features) blueprintState.defaultInstructions else null,
             setBoardInstructions = vm.blueprints::setDefaultInstructions,
+            extrasServed = io.github.nideta231.hermesremote.data.ExtraFeatures.served(bridgeFeatures, gatewayHost != null),
         )
         val pcActions = PcActions(watch = { vm.monitor.watch() }, unwatch = vm.monitor::stop, refresh = vm.monitor::refresh,
             setRange = vm.monitor::setRange, setSort = vm.monitor::setSort, setQuery = vm.monitor::setQuery,

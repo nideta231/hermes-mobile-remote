@@ -332,7 +332,7 @@ class BlueprintRepo(
     /** Re-read the list every [periodMs] while the app process lives, so new comments badge and alert. */
     fun watch(periodMs: Long = 30_000L) {
         if (watchJob?.isActive == true) return
-        watchJob = scope.launch { while (true) { delay(periodMs); if (client() != null) refreshList() } }
+        watchJob = scope.launch { while (true) { delay(periodMs); if (client() != null && ExtraFeatures.isOn(Extra.BLUEPRINTS)) refreshList() } }
     }
     private var watchJob: Job? = null
 
