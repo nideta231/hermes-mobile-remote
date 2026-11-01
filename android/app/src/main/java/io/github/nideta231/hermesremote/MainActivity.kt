@@ -533,7 +533,10 @@ class MainActivity : ComponentActivity() {
             setBoardDefaults = vm.blueprints::setDefaults,
             boardInstructions = if ("blueprints" in features) blueprintState.defaultInstructions else null,
             setBoardInstructions = vm.blueprints::setDefaultInstructions,
-            extrasServed = io.github.nideta231.hermesremote.data.ExtraFeatures.served(bridgeFeatures, gatewayHost != null),
+            extrasServed = io.github.nideta231.hermesremote.data.ExtraFeatures.remoteAvailable
+                ?: io.github.nideta231.hermesremote.data.ExtraFeatures.served(bridgeFeatures, gatewayHost != null),
+            setExtra = vm::setExtra,
+            extrasOnPc = "extras" in bridgeFeatures,
         )
         val pcActions = PcActions(watch = { vm.monitor.watch() }, unwatch = vm.monitor::stop, refresh = vm.monitor::refresh,
             setRange = vm.monitor::setRange, setSort = vm.monitor::setSort, setQuery = vm.monitor::setQuery,

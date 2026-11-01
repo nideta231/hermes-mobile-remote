@@ -44,6 +44,7 @@ from . import blueprint as bp_mod
 from . import funnel as funnel_mod
 from . import library as lib_mod
 from . import library_store as lib_store
+from . import extras as extras_mod
 from .local_api import devices_doc, pairing_payload, pairing_uri, qr_png, trust_doc
 from .network import TrustStore, current_network, network_info, serving_lan_ips
 from .chat_files import referenced_file
@@ -248,6 +249,8 @@ async def _hermes_cli(cfg: Config, *args: str) -> str:
     return out.decode(errors="replace")
 
 
+OFF_HINT = "{} is switched off (phone Settings > Additional features)"
+
 def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: TailnetClient | None = None,
                devices: DeviceStore | None = None, owner_login: str | None = None,
                hermes_cli=None, trust: TrustStore | None = None,
@@ -268,6 +271,7 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
     http = http or httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=2.0))
     allowed_logins = set(cfg.allowed_logins) or ({owner_login} if owner_login else set())
     funnel_store = funnel_mod.FunnelStore(cfg.funnel_file)
+    extras = extras_mod.store_for(cfg)
     funnel_lock = funnel_mod.Lockout()
     funnel_tickets = funnel_mod.Tickets()
     serve_config = funnel_mod.ServeConfig(tailnet_socket)
@@ -292,11 +296,24 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
 
         task = asyncio.create_task(housekeeping())
         if monitor is not None:
+            monitor.paused = not extras.on("monitor")
             monitor.start()
+
+        async def sync_extras() -> None:
+            # Hermes' skills.disabled follows the switches (also right after an update created the file).
+            with contextlib.suppress(Exception):
+                problems = await asyncio.to_thread(extras_mod.sync_skills, cfg.hermes_bin, cfg.hermes_home, extras.get())
+                for p in problems:
+                    log.warning("additional features: %s", p)
+        # First start with the switches (fresh install or just updated): make Hermes' skills follow them.
+        extras.get()
+        extras_task = asyncio.create_task(sync_extras()) if extras.created else None
         try:
             yield
         finally:
             task.cancel()
+            if extras_task is not None:
+                extras_task.cancel()
             await parked.close_all()
             if monitor is not None:
                 monitor.stop()
@@ -621,7 +638,8 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
                                               ("funnel", cfg.funnel and tailnet_socket is not None),
                                               ("admin", cfg.remote_admin),
                                               ("parked", cfg.remote_admin),
-                                              ("library", cfg.library)) if on],
+                                              ("library", cfg.library),
+                                              ("extras", True)) if on and f not in extras_mod.features_off(extras.get())],
                 "bridge_version": __version__, "protocol": PROTOCOL}
 
     note_store = notes_mod.NoteStore(cfg.notes_dir)
@@ -629,6 +647,8 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
     def _notes_on() -> None:
         if not cfg.notes:
             raise ApiError(404, "notes_off", "Notes are off (notes = false)")
+        if not extras.on("notes"):
+            raise ApiError(404, "notes_off", OFF_HINT.format("Notes"))
 
     def _note(note_id: str):
         try:
@@ -676,6 +696,8 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
     def _bp_on() -> None:
         if not cfg.blueprints:
             raise ApiError(404, "blueprints_off", "Blueprints are off (blueprints = false)")
+        if not extras.on("blueprints"):
+            raise ApiError(404, "blueprints_off", OFF_HINT.format("Blueprints"))
 
     def _bp(pid: str) -> dict:
         try:
@@ -1099,6 +1121,8 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
     def _lib_on() -> None:
         if not cfg.library:
             raise ApiError(404, "library_off", "The Memory Library is off (library = false)")
+        if not extras.on("library"):
+            raise ApiError(404, "library_off", OFF_HINT.format("Memory Library"))
 
     def _lib_name(profile: str | None) -> str:
         return profile or "default"
@@ -1590,7 +1614,31 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
     def need_monitor() -> Monitor:
         if monitor is None:
             raise ApiError(404, "monitor_off", "The PC monitor is turned off in the bridge's config.toml")
+        if not extras.on("monitor"):
+            raise ApiError(404, "monitor_off", OFF_HINT.format("PC monitor"))
         return monitor
+
+    # ------------------------------------------------------------ additional features
+    def _extras_doc(problems: list[str] | None = None) -> dict:
+        available = {"library": cfg.library, "monitor": monitor is not None, "terminal": cfg.terminal,
+                     "notes": cfg.notes, "blueprints": cfg.blueprints, "graph": True}
+        return {"extras": extras_mod.describe(extras.get(), available), "problems": problems or []}
+
+    @app.get("/v1/extras")
+    async def get_extras(_: Device = Depends(device_auth)):
+        return _extras_doc()
+
+    @app.put("/v1/extras")
+    async def set_extras(request: Request, device: Device = Depends(device_auth)):
+        """Switch additional features on/off for this PC, e.g. {"monitor": false}. Off stops them on the PC too."""
+        body = await request.json() if await request.body() else {}
+        try:
+            state, changed = extras.set(body if isinstance(body, dict) else {})
+        except ValueError as exc:
+            raise ApiError(400, "bad_extras", str(exc))
+        problems = await asyncio.to_thread(extras_mod.apply, cfg, state, changed, monitor) if changed else []
+        audit_event({"event": "extras", "device": device.name, "changed": changed, "problems": len(problems)})
+        return _extras_doc(problems)
 
     async def off_loop(fn, *args):
         return await asyncio.get_running_loop().run_in_executor(None, fn, *args)
@@ -1703,9 +1751,10 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
         node, device = await ws_device(ws, "terminal")
         if device is None:
             return
-        if not cfg.terminal:
+        if not cfg.terminal or not extras.on("terminal"):
             metrics.ws_rejected.inc(endpoint="terminal", reason="disabled")
-            await ws.close(code=4404, reason="The terminal is turned off in the bridge's config.toml")
+            await ws.close(code=4404, reason="The terminal is turned off in the bridge's config.toml" if not cfg.terminal
+                           else OFF_HINT.format("Terminal"))
             return
         await ws.accept()
         shell = shell_factory(cols=max(10, min(cols, 500)), rows=max(4, min(rows, 300)))

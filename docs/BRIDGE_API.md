@@ -299,6 +299,20 @@ same one the desktop app uses. The bridge adds only:
 - Models: `model.options`. Switch the chat's model with `config.set {session_id, key: "model",
   value: "<model> --provider <slug> --session"}`, and its reasoning effort with `key: "reasoning"`.
 
+## Additional features (feature `extras`)
+
+`GET /v1/extras` and `PUT /v1/extras {"monitor": true, "notes": false}` (keys: `library`, `monitor`,
+`terminal`, `notes`, `blueprints`, `graph`) answer `{"extras": {"monitor": {"on", "available", "label"}, ...},
+"problems": [...]}`. Stored in `extras.json` next to config.toml. A fresh install has everything off;
+the first start after an update turns on what already holds data (boards, notes, an enabled Memory
+Library). Off means off on the PC: the feature's `/v1/me` flags disappear, its routes answer 404
+`<name>_off`, the terminal socket closes 4404, the monitor stops sampling (Claude usage too), the Memory
+Library is switched off in every profile that used it (memories kept, re-enabled when switched back on)
+and its database stopped, and the Hermes skills that drive a feature (`personal-notes`,
+`project-blueprint`) go into every profile's `skills.disabled` (other entries untouched). The CLI
+refuses `notes` / `blueprint` / `library` commands while off; `hermes-remote-bridge extras [key=on|off]`
+lists or switches them on the PC.
+
 ## Notes
 
 Keep-style notes, one Markdown file each in `notes_dir` (default `~/.config/hermes-remote/notes/`): a

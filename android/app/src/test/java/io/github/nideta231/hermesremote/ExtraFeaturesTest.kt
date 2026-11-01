@@ -31,4 +31,13 @@ class ExtraFeaturesTest {
         assertEquals(setOf(Extra.NOTES, Extra.GRAPH), Extra.parse(setOf("notes", "graph", "gone")))
         assertEquals(emptySet<Extra>(), Extra.parse(null))
     }
+
+    @Test fun thePcsAnswerSaysWhatIsOnAndWhatItCanServe() {
+        val doc = org.json.JSONObject("""{"extras": {"monitor": {"on": true, "available": true},
+            "notes": {"on": false, "available": true}, "terminal": {"on": false, "available": false},
+            "graph": {"on": true}}}""")
+        val (on, available) = ExtraFeatures.parseRemote(doc)
+        assertEquals(setOf(Extra.PC_MONITOR, Extra.GRAPH), on)
+        assertEquals(setOf(Extra.PC_MONITOR, Extra.NOTES, Extra.GRAPH), available)
+    }
 }

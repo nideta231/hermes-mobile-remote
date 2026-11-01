@@ -6,9 +6,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
 /** Pages beyond chat that the user switches on in Settings > Additional features (all off by default). */
-enum class Extra(val key: String, val label: String, val description: String) {
+enum class Extra(val key: String, val label: String, val description: String, val wire: String = key) {
     LIBRARY("library", "Memory Library", "Hermes' own long-term memory: library page and setup on the PC bridge page"),
-    PC_MONITOR("pc_monitor", "PC monitor", "PC stats, processes and the Claude usage ring in the chat"),
+    PC_MONITOR("pc_monitor", "PC monitor", "PC stats, processes and the Claude usage ring in the chat", wire = "monitor"),
     TERMINAL("terminal", "Terminal", "A shell on your PC"),
     NOTES("notes", "Notes", "Keep-style notes Hermes can read and edit"),
     BLUEPRINTS("blueprints", "Blueprints", "Project boards and flow diagrams, their badges and notifications"),
@@ -21,7 +21,11 @@ enum class Extra(val key: String, val label: String, val description: String) {
     }
 }
 
-/** Which [Extra]s are switched on, per phone (not per PC). Nothing is on until the user turns it on. */
+/**
+ * Which [Extra]s are switched on. A bridge with the `extras` feature owns the switches (they stop the
+ * feature on the PC too, see [applyRemote]); an older bridge only gets them hidden on this phone.
+ * Nothing is on until the user turns it on.
+ */
 object ExtraFeatures {
     var enabled by mutableStateOf<Set<Extra>>(emptySet())
         private set
@@ -33,6 +37,29 @@ object ExtraFeatures {
     }
 
     fun isOn(e: Extra) = e in enabled
+
+    /** Extras the connected PC can serve when it manages the switches itself; null = an older bridge. */
+    var remoteAvailable by mutableStateOf<Set<Extra>?>(null)
+        private set
+
+    /** Mirror the PC's `GET/PUT /v1/extras` answer. */
+    fun applyRemote(doc: org.json.JSONObject) {
+        val (on, available) = parseRemote(doc)
+        remoteAvailable = available
+        enabled = on
+        ctx?.let { prefs(it).edit().putStringSet(KEY, enabled.map { x -> x.key }.toHashSet()).apply() }
+    }
+
+    /** Connected to a bridge without the switches: the phone-only behaviour. */
+    fun clearRemote() { remoteAvailable = null }
+
+    /** (switched on, available) from `{"extras": {"monitor": {"on": true, "available": true}, ...}}`. */
+    fun parseRemote(doc: org.json.JSONObject): Pair<Set<Extra>, Set<Extra>> {
+        val x = doc.optJSONObject("extras") ?: org.json.JSONObject()
+        val on = Extra.entries.filter { x.optJSONObject(it.wire)?.optBoolean("on") == true }.toSet()
+        val available = Extra.entries.filter { x.optJSONObject(it.wire)?.optBoolean("available", true) ?: false }.toSet()
+        return on to available
+    }
 
     fun set(e: Extra, on: Boolean) {
         enabled = if (on) enabled + e else enabled - e

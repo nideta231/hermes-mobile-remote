@@ -885,6 +885,28 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /**
+     * Settings > Additional features. A bridge with `extras` switches the feature on the PC (off stops it
+     * there: monitoring, skills, Memory Library) and its /v1/me features change, so they are re-read.
+     */
+    fun setExtra(e: Extra, on: Boolean) {
+        val c = client
+        if (c == null || "extras" !in _features.value) { ExtraFeatures.set(e, on); return }
+        ExtraFeatures.set(e, on)  // the switch moves at once; the PC's answer below is the truth
+        viewModelScope.launch {
+            try {
+                val doc = c.setExtra(e.wire, on)
+                ExtraFeatures.applyRemote(doc)
+                doc.optJSONArray("problems")?.strings()?.firstOrNull()?.let { _toast.value = "${e.label}: $it" }
+                runCatching { c.me() }.getOrNull()?.let { me -> _features.value = me.optJSONArray("features").strings().toSet() }
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                ExtraFeatures.set(e, !on)
+                _toast.value = "Couldn't switch ${e.label} ${if (on) "on" else "off"}: ${t.message ?: t.javaClass.simpleName}"
+            }
+        }
+    }
+
     /** Ask the bridge what it answers on, so the app can offer LAN/Tailscale without re-pairing. */
     private fun discoverEndpoints() {
         val c = client ?: return
@@ -917,6 +939,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                 // Removed on the PC (bridge page, or another phone): drop the key here too.
                 if (!f.optBoolean("allowed") && _pairing.value?.funnelKey != null && _conn.value.transport != Transport.FUNNEL) forgetFunnel()
             }
+            if ("extras" in features) runCatching { ExtraFeatures.applyRemote(c.extras()) } else ExtraFeatures.clearRemote()
             if ("bridge_update" in features) bridgeUpdate.check(false)
             if ("blueprints" in features) { if (ExtraFeatures.isOn(Extra.BLUEPRINTS)) blueprints.refreshList(); blueprints.watch() }
             if (me.optInt("protocol", 0) < MIN_BRIDGE_PROTOCOL) {

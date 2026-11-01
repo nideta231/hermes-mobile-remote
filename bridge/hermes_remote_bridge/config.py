@@ -98,6 +98,8 @@ class Config:
     # the phone; nothing is downloaded or switched until the user accepts). false hides it entirely.
     library: bool = True
     library_dir: Path = STATE_DIR / "library"
+    # Additional features the user switched on (phone Settings > Additional features); see extras.py.
+    extras_file: Path = CONFIG_DIR / "extras.json"
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":

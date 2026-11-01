@@ -1070,6 +1070,9 @@ class SettingsActions(
     val setBoardInstructions: (String) -> Unit = {},
     /** Additional features this PC can serve (the others show "Not on this PC"). */
     val extrasServed: Set<io.github.nideta231.hermesremote.data.Extra> = io.github.nideta231.hermesremote.data.Extra.entries.toSet(),
+    val setExtra: (io.github.nideta231.hermesremote.data.Extra, Boolean) -> Unit = { e, on -> io.github.nideta231.hermesremote.data.ExtraFeatures.set(e, on) },
+    /** The PC itself follows the switches (newer bridge); otherwise they only hide pages on this phone. */
+    val extrasOnPc: Boolean = false,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1121,8 +1124,10 @@ fun SettingsScreen(
                     Spacer(Modifier.size(10.dp))
                     LayoutPanel()
                 }
-                SettingsSection("Additional features", "Extra pages, off until you turn them on. Off hides them from the menu and stops their checks.") {
-                    ExtraFeaturesPanel(actions.extrasServed)
+                SettingsSection("Additional features", if (actions.extrasOnPc)
+                    "Off until you turn them on. Off means off on the PC too: nothing is monitored or run, and Hermes doesn't use it."
+                    else "Off until you turn them on. This PC's bridge is older: off only hides them on this phone (update the PC bridge to stop them there too).") {
+                    ExtraFeaturesPanel(actions.extrasServed, actions.setExtra)
                 }
                 SettingsSection("Background", "What happens when you close or swipe away the app.") {
                     KeepAlivePanel()
@@ -1514,14 +1519,15 @@ private fun LayoutPanel() {
 
 /** One switch per [io.github.nideta231.hermesremote.data.Extra]; a feature the PC doesn't serve says so instead. */
 @Composable
-private fun ExtraFeaturesPanel(served: Set<io.github.nideta231.hermesremote.data.Extra>) {
+private fun ExtraFeaturesPanel(served: Set<io.github.nideta231.hermesremote.data.Extra>,
+                               set: (io.github.nideta231.hermesremote.data.Extra, Boolean) -> Unit) {
     val extras = io.github.nideta231.hermesremote.data.ExtraFeatures
     Panel {
         io.github.nideta231.hermesremote.data.Extra.entries.forEachIndexed { i, e ->
             if (i > 0) PanelDivider()
             val here = e in served
             PanelRow(e.label, if (here) e.description else "${e.description}. Not on this PC (update the PC bridge).") {
-                androidx.compose.material3.Switch(extras.isOn(e), { extras.set(e, it) }, enabled = here)
+                androidx.compose.material3.Switch(extras.isOn(e), { set(e, it) }, enabled = here)
             }
         }
     }

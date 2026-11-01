@@ -175,6 +175,8 @@ class Monitor:
         self._prev_net = self._prev_disk = None
         self._prev_t = 0.0
         self._speed_lock = threading.Lock()  # one speed test at a time
+        # PC monitor switched off (Additional features): the loop reads nothing until it is back on.
+        self.paused = False
         self.tracking_path = db_path.parent / "monitor-tracking.json"
         self.tracking: dict[str, bool] = self._load_tracking()
 
@@ -479,6 +481,10 @@ class Monitor:
         next_claude = time.time() + 5  # not at import time: let the bridge finish starting
         while not self._stop.is_set():
             t0 = time.time()
+            if self.paused:
+                self._prev_net = self._prev_disk = None
+                self._stop.wait(SAMPLE_SECONDS)
+                continue
             try:
                 self.sample()
                 if t0 - last_rollup >= 60:

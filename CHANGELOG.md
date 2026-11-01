@@ -17,6 +17,15 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## v1.47.0
+
+- **Off is off on the PC too** (needs the updated bridge): the switches live on the PC, so the PC
+  monitor stops sampling, the routes refuse, the Memory Library is switched off in every profile (your
+  memories are kept and it comes back when switched on) and its database stops, and Hermes' skills
+  for Notes and Blueprints are disabled, so Hermes never uses a feature you didn't turn on. Updating
+  keeps on what you already use (boards, notes, an enabled Memory Library). On the PC:
+  `hermes-remote-bridge extras` lists them, `extras monitor=on` switches one.
+
 ## v1.46.0
 
 - **Settings > Additional features**: Memory Library, PC monitor, Terminal, Notes, Blueprints and

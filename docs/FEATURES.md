@@ -70,8 +70,11 @@ Settings > *Additional features* has one switch each for the Memory Library, PC 
 Terminal, Notes, Blueprints and Graph. All are off on a fresh install, so the app starts as chat
 only. Off hides the page from the ⋮ menu (Blueprints also hides the drawer's board icons, badges
 and board notifications; PC monitor also hides the Claude usage ring) and stops that feature's
-polling. The switches are stored on the phone, not the PC; a feature the PC bridge doesn't serve
-shows *Not on this PC* and can't be switched on.
+polling. With an updated PC bridge the switches live on the PC and off stops the feature there too:
+no monitoring, its routes refuse, the Memory Library is switched off (memories kept) and Hermes' Notes
+and Blueprints skills are disabled, so Hermes never uses a feature the user didn't turn on. An older
+bridge only gets them hidden on the phone. A feature the PC bridge doesn't serve shows *Not on this
+PC* and can't be switched on.
 
 ## PC monitor, terminal and widgets
 

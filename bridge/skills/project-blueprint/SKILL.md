@@ -69,6 +69,7 @@ Priorities: low medium high. Assignee: me, hermes. Dates: YYYY-MM-DD. Every chan
 - Files on the card itself (shown as "attached:" in `md`) live in its `files` list: add one with `card.update` `"files": [...existing, "<abs path>"]` (the list is replaced, not appended). Files the phone attached are in `blueprints_dir/files/<project id>/`.
 
 ## Don't
+- If `blueprint` answers "Blueprints is switched off on this PC", the user turned the feature off (phone Settings > Additional features). Don't switch it back on yourself; say so and ask.
 - Don't edit the JSON files by hand (`blueprint path`); use the commands, which merge with the phone's edits.
 - Don't mark a card Done before the work is verified.
 - If the command is missing, the PC has an old Hermes Remote bridge: say so (update it from the phone: PC bridge > Update).

@@ -988,6 +988,40 @@ def _no_command_help(parser: argparse.ArgumentParser) -> None:
         input("\nPress Enter to close this window...")
 
 
+def _extra_on(cfg: Config, key: str) -> bool:
+    from . import extras as ex
+
+    store = ex.store_for(cfg)
+    on = store.on(key)
+    if store.created:  # first look after an update: Hermes' skills follow the switches from now on
+        ex.sync_skills(cfg.hermes_bin, cfg.hermes_home, store.get())
+    return on
+
+
+def cmd_extras(cfg: Config, args: argparse.Namespace) -> None:
+    """Show or switch the additional features (the same switches as the phone's Settings)."""
+    from . import extras as ex
+
+    store = ex.store_for(cfg)
+    if args.changes:
+        changes = {}
+        for item in args.changes:
+            key, _, value = item.partition("=")
+            if value not in ("on", "off"):
+                raise ValueError(f"Use key=on or key=off, not '{item}'")
+            changes[key] = value == "on"
+        state, changed = store.set(changes)
+        for p in ex.apply(cfg, state, changed):
+            print(f"warning: {p}")
+        print("The running bridge picks this up on its next restart (the phone's switch applies at once).")
+    state = store.get()
+    if args.json:
+        print(json.dumps(state))
+        return
+    for k, (label, _) in ex.EXTRAS.items():
+        print(f"{k:11} {'on ' if state[k] else 'off'}  {label}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="hermes-remote-bridge")
     parser.add_argument("--config", type=Path, help="config.toml (default ~/.config/hermes-remote/config.toml)")
@@ -1053,6 +1087,9 @@ def main(argv: list[str] | None = None) -> None:
     nt.add_argument("--query", "-q", help="list: search title, text and labels")
     nt.add_argument("--all", action="store_true", help="list: include archived")
     nt.add_argument("--json", action="store_true")
+    xp = sub.add_parser("extras", help="Additional features on this PC: list, or switch e.g. monitor=on notes=off")
+    xp.add_argument("changes", nargs="*", help="key=on|off (library monitor terminal notes blueprints graph)")
+    xp.add_argument("--json", action="store_true")
     lb = sub.add_parser("library", help="Memory Library: Hermes' own memory on a private Postgres")
     lb.add_argument("action", choices=("status", "plan", "install", "enable", "disable", "remove", "doctor", "settings",
                                        "list", "search", "add", "show", "edit", "bump", "stats", "path"))
@@ -1100,7 +1137,13 @@ def main(argv: list[str] | None = None) -> None:
     handler = {"serve": cmd_serve, "pair": cmd_pair, "revoke": cmd_revoke, "devices": cmd_devices,
                "trust": cmd_trust, "doctor": cmd_doctor, "firewall": cmd_firewall,
                "supervise": cmd_supervise, "metrics": cmd_metrics, "update": cmd_update,
-               "notes": cmd_notes, "blueprint": cmd_blueprint, "library": cmd_library}[args.command]
+               "notes": cmd_notes, "blueprint": cmd_blueprint, "library": cmd_library,
+               "extras": cmd_extras}[args.command]
+    extra = {"notes": "notes", "blueprint": "blueprints", "library": "library"}.get(args.command)
+    if extra and not _extra_on(cfg, extra) and not (args.command == "blueprint" and getattr(args, "action", None) == "list"):
+        from .extras import EXTRAS
+        sys.exit(f"{EXTRAS[extra][0]} is switched off on this PC (phone Settings > Additional features, "
+                 f"or: hermes-remote-bridge extras {extra}=on).")
     try:
         handler(cfg, args)
     except ValueError as exc:

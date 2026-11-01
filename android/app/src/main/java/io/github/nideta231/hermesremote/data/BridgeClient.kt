@@ -101,6 +101,11 @@ class BridgeClient(
 
     suspend fun me() = call("GET", "/v1/me")
 
+    /** Additional features this PC has switched on (bridge feature `extras`). */
+    suspend fun extras() = call("GET", "/v1/extras")
+
+    suspend fun setExtra(wire: String, on: Boolean) = call("PUT", "/v1/extras", body = JSONObject().put(wire, on))
+
     suspend fun notes(query: String = "", archived: Boolean = false, label: String? = null) =
         call("GET", "/v1/notes", mapOf("q" to query.ifBlank { null }, "archived" to archived, "label" to label))
     suspend fun blueprints() = call("GET", "/v1/blueprints")
