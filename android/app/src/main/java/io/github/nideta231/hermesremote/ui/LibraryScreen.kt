@@ -163,12 +163,18 @@ private fun MemoriesTab(state: LibraryState, repo: LibraryRepo) {
             }
             ScopePicker(f.scope, state, allowAll = true) { s -> repo.setFilter { it.copy(scope = s) } }
         }
-        state.stats?.let { s ->
+        if (!state.listPending) state.stats?.let { s ->
             Text("${state.total} shown · ${s.needsReview} need review · ${s.unused30d} never recalled in 30 days",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
         }
-        if (state.memories.isEmpty()) Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        if (state.listPending) Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            state.error?.let { Text(it, color = Bad) } ?: Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                TypingDots(Gold)
+                Text("Loading memories…", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+            }
+        } else if (state.memories.isEmpty()) Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Text(if (f == LibraryFilter()) "No memories yet. Hermes saves them as you correct it, or tap Add." else "Nothing matches these filters.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),

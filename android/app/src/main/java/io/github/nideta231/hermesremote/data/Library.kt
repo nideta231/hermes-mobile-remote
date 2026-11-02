@@ -147,7 +147,12 @@ data class LibraryState(
     val error: String? = null,
     /** The bridge has no Library (older, or `library = false`). */
     val unsupported: Boolean = false,
-)
+    /** The filter [memories] was loaded for; null = not loaded yet. */
+    val listFor: LibraryFilter? = null,
+) {
+    /** The list on screen is not (yet) the answer for the current filter: show loading, never "No memories". */
+    val listPending: Boolean get() = listFor != filter
+}
 
 /** Pure helpers the page and the tests share. */
 object LibraryText {
@@ -250,7 +255,7 @@ class LibraryRepo(
         guarded { c ->
             val f = _state.value.filter
             val o = c.libraryMemories(f, profile())
-            _state.update { it.copy(memories = o.optJSONArray("items").objects().map(Memory::parse), total = o.optInt("total"), loading = false) }
+            _state.update { it.copy(memories = o.optJSONArray("items").objects().map(Memory::parse), total = o.optInt("total"), loading = false, listFor = f) }
         }
     }
 

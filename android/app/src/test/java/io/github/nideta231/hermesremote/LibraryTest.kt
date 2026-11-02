@@ -2,7 +2,9 @@ package io.github.nideta231.hermesremote
 
 import io.github.nideta231.hermesremote.data.GraphKind
 import io.github.nideta231.hermesremote.data.KnowledgeGraph
+import io.github.nideta231.hermesremote.data.LibraryFilter
 import io.github.nideta231.hermesremote.data.LibraryProject
+import io.github.nideta231.hermesremote.data.LibraryState
 import io.github.nideta231.hermesremote.data.LibraryStats
 import io.github.nideta231.hermesremote.data.LibraryStatus
 import io.github.nideta231.hermesremote.data.LibraryText
@@ -106,5 +108,13 @@ class LibraryTest {
         assertEquals("project:p1", g.nodes[3].ref)
         assertEquals(GraphKind.CHAT, g.nodes[4].kind); assertEquals("20261031_1", g.nodes[4].ref)
         assertEquals(3, g.degree[1])
+    }
+
+    @Test fun listIsPendingUntilLoadedForTheCurrentFilter() {
+        assertTrue(LibraryState().listPending)
+        val loaded = LibraryState(listFor = LibraryFilter())
+        assertFalse(loaded.listPending)
+        assertTrue(loaded.copy(filter = LibraryFilter(kind = "rule")).listPending)
+        assertFalse(LibraryState(filter = LibraryFilter(kind = "rule"), listFor = LibraryFilter(kind = "rule")).listPending)
     }
 }
