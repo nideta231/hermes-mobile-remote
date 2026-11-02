@@ -11,7 +11,9 @@ request number.
 - **@LastNyx** (Benediktus Aprianto): the Windows tray app (#2), tray *Start at logon* and *Stop
   trusting* fixes (#4), sign in to a gated gateway from the phone (#14), the Hermes Remote
   desktop app for Windows and Linux with a PowerShell-free Windows bridge (#19), and keep working in
-  the background with fast reattach, bridge socket parking and linked gateway + bridge hosts (#20).
+  the background with fast reattach, bridge socket parking and linked gateway + bridge hosts (#20),
+  the bridge self-update and run status pill (#22), and display settings: tool & thought tree and
+  centered chat width (#23).
 - **@Justcallmesu** (Suwanto Ardi Winata): Linux tray install (#5), Hermes profiles (#6, #9, #13),
   the Linux tray devices fix (#7), roadmap (#8), scheduled jobs (#10), app refactors (#11),
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
@@ -23,7 +25,7 @@ request number.
   *Classic* (every thought and tool call as its own row) and *Tree* (a run of thoughts and tool
   calls folds into one "Worked for 12.3s" row, like the desktop app; open it for the steps, and a
   step for its calls and thought). *Chat width* switches between *Classic* and *Centered*, which
-  keeps the chat in a column as wide as the message box on wide screens. Both default to Classic.
+  keeps the chat in a column as wide as the message box on wide screens. Both default to Classic. **@LastNyx** (#23)
 
 ## v1.48.0
 
