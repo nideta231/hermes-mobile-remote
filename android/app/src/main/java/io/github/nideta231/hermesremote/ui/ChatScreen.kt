@@ -566,7 +566,7 @@ private fun MessageList(state: ChatState, subagentActions: SubagentActions) {
             contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(rows, key = { it.rowKey() }) { row ->
-                ChatColumn(columnMax) {
+                WideDock(columnMax, Alignment.TopCenter) {
                     Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null).entrance(row.rowKey(), seen)) {
                         val item = (row as? FoldedItem.Item)?.item
                         if (row is FoldedItem.Group) ToolGroupRow(row) else when (item!!) {
@@ -585,7 +585,7 @@ private fun MessageList(state: ChatState, subagentActions: SubagentActions) {
                 }
             }
             if (thinking) item(key = "typing") {
-                ChatColumn(columnMax) {
+                WideDock(columnMax, Alignment.TopCenter) {
                     Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null).entrance("typing", HashSet())) { TypingIndicator() }
                 }
             }
@@ -891,23 +891,16 @@ const val WIDE_SCREEN_DP = 720
 fun chatColumnMaxWidth(width: ChatWidth, wideScreen: Boolean): Dp? =
     if (width == ChatWidth.CENTERED && wideScreen) DOCK_MAX_WIDTH else null
 
-/** Centres one transcript row in a column of at most [max]; with a null [max] it is the row as-is. */
-@Composable
-private fun ChatColumn(max: Dp?, content: @Composable () -> Unit) {
-    if (max == null) content()
-    else Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-        Box(Modifier.widthIn(max = max).fillMaxWidth()) { content() }
-    }
-}
-
 /**
  * Keeps the approval/question docks and the composer at a readable width on wide screens (tablet,
  * desktop window), centred under the chat; on a phone it is the full width as before.
+ * Transcript rows reuse it with [max] from [chatColumnMaxWidth] and a top [align]; a null [max] is the child as-is.
  */
 @Composable
-internal fun WideDock(content: @Composable () -> Unit) {
-    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
-        Box(Modifier.widthIn(max = DOCK_MAX_WIDTH).fillMaxWidth()) { content() }
+internal fun WideDock(max: Dp? = DOCK_MAX_WIDTH, align: Alignment = Alignment.BottomCenter, content: @Composable () -> Unit) {
+    if (max == null) content()
+    else Box(Modifier.fillMaxWidth(), contentAlignment = align) {
+        Box(Modifier.widthIn(max = max).fillMaxWidth()) { content() }
     }
 }
 
