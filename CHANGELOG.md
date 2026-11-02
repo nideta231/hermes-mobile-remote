@@ -17,6 +17,14 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## Unreleased
+
+- **Display settings** (*Settings > App > Appearance*): *Tool & thought display* switches between
+  *Classic* (every thought and tool call as its own row) and *Tree* (a run of thoughts and tool
+  calls folds into one "Worked for 12.3s" row, like the desktop app; open it for the steps, and a
+  step for its calls and thought). *Chat width* switches between *Classic* and *Centered*, which
+  keeps the chat in a column as wide as the message box on wide screens. Both default to Classic.
+
 ## v1.48.0
 
 - **Settings in tabs**: *PC* (connection, Hermes, default model, approvals, vault), *App* (look,
