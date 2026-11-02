@@ -122,6 +122,8 @@ import io.github.nideta231.hermesremote.Link
 import io.github.nideta231.hermesremote.data.ModelConfirm
 import io.github.nideta231.hermesremote.data.ProjectRef
 import io.github.nideta231.hermesremote.data.ChatItem
+import io.github.nideta231.hermesremote.data.FoldedItem
+import io.github.nideta231.hermesremote.data.foldTools
 import io.github.nideta231.hermesremote.data.LiveReducer
 import io.github.nideta231.hermesremote.data.ReplyMedia
 import io.github.nideta231.hermesremote.data.fileName
@@ -539,7 +541,11 @@ private fun MessageList(state: ChatState, subagentActions: SubagentActions) {
     // Keys already on screen when the chat opened (history) appear at once; only items that
     // arrive afterwards fade and rise in. Kept for the list's lifetime, so scrolling an item out
     // and back never replays its entrance (the old "chat fading in and out" bug).
-    val seen = remember(state.sessionId) { HashSet<String>(state.items.map { it.key }) }
+    val tree = ThemePrefs.toolDisplay == ToolDisplay.TREE
+    val rows = remember(state.items, state.busy, tree) {
+        if (tree) foldTools(state.items, state.busy) else state.items.map { FoldedItem.Item(it) }
+    }
+    val seen = remember(state.sessionId) { HashSet<String>(rows.map { it.rowKey() }) }
     val lastText = (state.items.lastOrNull() as? ChatItem.Assistant)?.text?.length ?: 0
     val viewport by remember { derivedStateOf { listState.layoutInfo.viewportSize.height } }
     LaunchedEffect(state.items.size, lastText, viewport, state.busy, state.subagents.size, state.processes.size) {
@@ -559,10 +565,11 @@ private fun MessageList(state: ChatState, subagentActions: SubagentActions) {
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(state.items, key = { it.key }) { item ->
+            items(rows, key = { it.rowKey() }) { row ->
                 ChatColumn(columnMax) {
-                    Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null).entrance(item.key, seen)) {
-                        when (item) {
+                    Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null).entrance(row.rowKey(), seen)) {
+                        val item = (row as? FoldedItem.Item)?.item
+                        if (row is FoldedItem.Group) ToolGroupRow(row) else when (item!!) {
                             is ChatItem.User -> UserBubble(item)
                             is ChatItem.Assistant -> AssistantBlock(item)
                             is ChatItem.Thinking -> ThinkingBlock(item)
@@ -593,6 +600,11 @@ private fun MessageList(state: ChatState, subagentActions: SubagentActions) {
             }
         }
     }
+}
+
+private fun FoldedItem.rowKey(): String = when (this) {
+    is FoldedItem.Item -> item.key
+    is FoldedItem.Group -> key
 }
 
 /** New items fade in and rise 12 dp with a soft spring; items in [seen] are shown as-is. */
@@ -743,11 +755,15 @@ private fun ThinkingBlock(item: ChatItem.Thinking) {
             Spacer(Modifier.width(4.dp))
             Icon(Glyphs.Chevron, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp).rotate(rot))
         }
-        if (open) {
-            Text(remember(item.text) { clipForDisplay(item.text) }, style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 20.dp, top = 6.dp))
-        }
+        if (open) ThoughtText(item.text, Modifier.padding(start = 20.dp, top = 6.dp))
     }
+}
+
+/** The reasoning text of a thought, as the Classic block and the Tree steps both show it. */
+@Composable
+internal fun ThoughtText(text: String, modifier: Modifier = Modifier) {
+    Text(remember(text) { clipForDisplay(text) }, style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
 }
 
 @Composable
@@ -758,7 +774,7 @@ private fun NoticeLine(item: ChatItem.Notice) {
 }
 
 @Composable
-private fun ToolRow(item: ChatItem.Tool) {
+internal fun ToolRow(item: ChatItem.Tool) {
     var open by rememberSaveable(item.key) { mutableStateOf(false) }
     val color by animateColorAsState(when (item.status) {
         ToolStatus.RUNNING -> Gold
