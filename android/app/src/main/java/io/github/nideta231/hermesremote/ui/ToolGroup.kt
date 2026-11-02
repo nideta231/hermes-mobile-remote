@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.nideta231.hermesremote.data.FoldedItem
 import io.github.nideta231.hermesremote.data.ToolStep
+import io.github.nideta231.hermesremote.data.isOpen
+import io.github.nideta231.hermesremote.data.stepIsLive
 import io.github.nideta231.hermesremote.data.stepsOf
 
 /** "Working" while running, else "Worked for 12.3s", or just "Worked" when no duration is known. */
@@ -58,7 +60,7 @@ internal fun failedText(count: Int): String? = if (count > 0) "$count failed" el
 internal fun ToolGroupRow(group: FoldedItem.Group) {
     // null = the reader has not tapped: follow the default (the last turn's group is open).
     var picked by rememberSaveable(group.key) { mutableStateOf<Boolean?>(null) }
-    val open = picked ?: group.lastTurn
+    val open = isOpen(picked, group.lastTurn)
     val rot by animateFloatAsState(if (open) 180f else 0f, label = "group-chev")
     val quiet = MaterialTheme.colorScheme.onSurfaceVariant
     Column(Modifier.fillMaxWidth().animateContentSize(spring(stiffness = Spring.StiffnessMediumLow))) {
@@ -85,7 +87,7 @@ internal fun ToolGroupRow(group: FoldedItem.Group) {
                 Spacer(Modifier.width(1.dp).fillMaxHeight().background(quiet.copy(alpha = 0.3f)))
                 Column(Modifier.padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     steps.forEachIndexed { i, step ->
-                        ToolStepRow(group.key, step, live = group.running && i == steps.lastIndex)
+                        ToolStepRow(group.key, step, live = stepIsLive(group.running, i, steps.size))
                     }
                 }
             }
@@ -97,7 +99,7 @@ internal fun ToolGroupRow(group: FoldedItem.Group) {
 private fun ToolStepRow(groupKey: String, step: ToolStep, live: Boolean) {
     val stepKey = step.thought?.key ?: step.tools.first().key
     var picked by rememberSaveable(groupKey, stepKey) { mutableStateOf<Boolean?>(null) }
-    val open = picked ?: live
+    val open = isOpen(picked, live)
     val rot by animateFloatAsState(if (open) 180f else 0f, label = "step-chev")
     val quiet = MaterialTheme.colorScheme.onSurfaceVariant
     Column(Modifier.fillMaxWidth()) {

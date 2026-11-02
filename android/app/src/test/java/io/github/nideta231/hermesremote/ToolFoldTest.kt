@@ -5,6 +5,8 @@ import io.github.nideta231.hermesremote.data.Delegate
 import io.github.nideta231.hermesremote.data.FoldedItem
 import io.github.nideta231.hermesremote.data.ToolStatus
 import io.github.nideta231.hermesremote.data.foldTools
+import io.github.nideta231.hermesremote.data.isOpen
+import io.github.nideta231.hermesremote.data.stepIsLive
 import io.github.nideta231.hermesremote.data.stepsOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,6 +21,24 @@ class ToolFoldTest {
     private fun user(k: String) = ChatItem.User(k, "hi")
     private fun text(k: String) = ChatItem.Assistant(k, "ok")
     private fun groups(l: List<FoldedItem>) = l.filterIsInstance<FoldedItem.Group>()
+
+    @Test fun readerTapBeatsDefaultAndNoTapFollowsIt() {
+        assertTrue(isOpen(picked = true, default = false))
+        assertFalse(isOpen(picked = false, default = true))
+        assertTrue(isOpen(picked = null, default = true))
+        assertFalse(isOpen(picked = null, default = false))
+    }
+
+    @Test fun groupDefaultIsLastTurnStepDefaultIsLive() {
+        val g = groups(foldTools(listOf(user("u"), think("a"), tool("b")), busy = false))[0]
+        assertTrue(isOpen(null, g.lastTurn))
+        val old = groups(foldTools(listOf(think("a"), tool("b"), user("u")), busy = false))[0]
+        assertFalse(isOpen(null, old.lastTurn))
+        val steps = stepsOf(g.items)
+        assertTrue(isOpen(null, stepIsLive(groupRunning = true, index = steps.lastIndex, count = steps.size)))
+        assertFalse(isOpen(null, stepIsLive(groupRunning = true, index = 0, count = 2)))
+        assertFalse(isOpen(null, stepIsLive(groupRunning = false, index = 1, count = 2)))
+    }
 
     @Test fun twoRowsFoldLoneToolAndThoughtsStay() {
         val folded = foldTools(listOf(think("a"), tool("b")), busy = false)
