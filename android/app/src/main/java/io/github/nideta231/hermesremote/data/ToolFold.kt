@@ -51,6 +51,12 @@ fun foldTools(items: List<ChatItem>, busy: Boolean): List<FoldedItem> {
     return out
 }
 
+/** Open or closed: the reader's tap ([picked], null = none) beats the [default]. */
+fun isOpen(picked: Boolean?, default: Boolean): Boolean = picked ?: default
+
+/** A step is live when its group is running and it is the last step. */
+fun stepIsLive(groupRunning: Boolean, index: Int, count: Int): Boolean = groupRunning && index == count - 1
+
 /** The steps of a group's rows: each thought starts a step, the tools after it belong to it. */
 fun stepsOf(items: List<ChatItem>): List<ToolStep> {
     val steps = mutableListOf<ToolStep>()
