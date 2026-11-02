@@ -195,6 +195,16 @@ private fun baseScheme(mode: ThemeMode, dark: Boolean, primary: Color): ColorSch
     }
 }
 
+/** How the chat shows thoughts and tool calls: every one as its own row, or grouped into steps like the desktop app. */
+enum class ToolDisplay { CLASSIC, TREE }
+
+/** Wide screens: the chat stretches across the whole width, or sits in a readable column in the middle. */
+enum class ChatWidth { CLASSIC, CENTERED }
+
+fun toolDisplayOf(stored: String?): ToolDisplay = ToolDisplay.entries.firstOrNull { it.name == stored } ?: ToolDisplay.CLASSIC
+
+fun chatWidthOf(stored: String?): ChatWidth = ChatWidth.entries.firstOrNull { it.name == stored } ?: ChatWidth.CLASSIC
+
 /** App-wide (not per PC) theme choice, persisted in its own prefs file. */
 object ThemePrefs {
     var mode by mutableStateOf(ThemeMode.DARK)
@@ -221,6 +231,8 @@ object ThemePrefs {
         sidebarWidth = clampSidebar(p.getInt("sidebar_width", SIDEBAR_DEFAULT))
         sidebarHidden = p.getBoolean("sidebar_hidden", false)
         compact = p.getBoolean("compact", false)
+        toolDisplay = toolDisplayOf(p.getString("tool_display", null))
+        chatWidth = chatWidthOf(p.getString("chat_width", null))
         customPrimary = p.takeIf { it.contains("custom_primary") }?.getInt("custom_primary", 0)?.let { Color(it) }
         customBackground = p.takeIf { it.contains("custom_background") }?.getInt("custom_background", 0)?.let { Color(it) }
     }
@@ -251,6 +263,23 @@ object ThemePrefs {
     /** Compact layout: everything about 12% smaller, so more fits on screen. */
     var compact by mutableStateOf(false)
         private set
+
+    /** Thoughts and tool calls: Classic rows or Tree steps. */
+    var toolDisplay by mutableStateOf(ToolDisplay.CLASSIC)
+        private set
+    /** Wide screens: Classic stretches the chat, Centered keeps it in a column. */
+    var chatWidth by mutableStateOf(ChatWidth.CLASSIC)
+        private set
+
+    fun pickToolDisplay(value: ToolDisplay) {
+        toolDisplay = value
+        ctx?.let { prefs(it).edit().putString("tool_display", value.name).apply() }
+    }
+
+    fun pickChatWidth(value: ChatWidth) {
+        chatWidth = value
+        ctx?.let { prefs(it).edit().putString("chat_width", value.name).apply() }
+    }
 
     /** While dragging: [save] false only updates the screen; the release saves. */
     fun pickSidebarWidth(dp: Int, save: Boolean = true) {
