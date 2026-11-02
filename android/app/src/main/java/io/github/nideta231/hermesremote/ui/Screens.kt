@@ -1531,6 +1531,22 @@ private fun LayoutPanel() {
             }
             androidx.compose.material3.Switch(!ThemePrefs.sidebarHidden, { ThemePrefs.pickSidebarHidden(!it) })
         }
+        PanelDivider()
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Text("Tool & thought display", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text("Classic shows every thought and tool call as its own row. Tree groups them like the desktop app.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Segmented(listOf("Classic", "Tree"), ThemePrefs.toolDisplay.ordinal, listOf(true, true),
+                { ThemePrefs.pickToolDisplay(ToolDisplay.entries[it]) }, Modifier.padding(top = 8.dp))
+        }
+        PanelDivider()
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Text("Chat width", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text("Wide screens only. Centered keeps the chat in a readable column in the middle, lined up with the message box.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Segmented(listOf("Classic", "Centered"), ThemePrefs.chatWidth.ordinal, listOf(true, true),
+                { ThemePrefs.pickChatWidth(ChatWidth.entries[it]) }, Modifier.padding(top = 8.dp))
+        }
     }
 }
 
