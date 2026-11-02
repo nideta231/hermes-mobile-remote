@@ -113,6 +113,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.nideta231.hermesremote.ChatState
@@ -552,28 +553,34 @@ private fun MessageList(state: ChatState, subagentActions: SubagentActions) {
     val delegateTools = remember(state.items) { state.items.filterIsInstance<ChatItem.Tool>().filter { it.name == Delegate.TOOL } }
     val (delegateRows, _) = remember(delegateTools, state.subagents) { Delegate.merge(delegateTools, state.subagents) }
 
+    val columnMax = chatColumnMaxWidth(ThemePrefs.chatWidth, LocalConfiguration.current.screenWidthDp >= WIDE_SCREEN_DP)
+
     Box(Modifier.fillMaxSize()) {
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(state.items, key = { it.key }) { item ->
-                Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null).entrance(item.key, seen)) {
-                    when (item) {
-                        is ChatItem.User -> UserBubble(item)
-                        is ChatItem.Assistant -> AssistantBlock(item)
-                        is ChatItem.Thinking -> ThinkingBlock(item)
-                        is ChatItem.Tool -> delegateRows[item.key]?.takeIf { it.isNotEmpty() }
-                            ?.let { DelegateCard(it, subagentActions) } ?: ToolRow(item)
-                        is ChatItem.Approval -> if (item.decided != null) ApprovalRecord(item)
-                        is ChatItem.Clarify -> if (item.answer != null) ClarifyRecord(item)
-                        is ChatItem.Secret -> if (item.outcome != null) SecretRecord(item)
-                        is ChatItem.Notice -> NoticeLine(item)
-                        is ChatItem.CommandOutput -> CommandOutputCard(item)
+                ChatColumn(columnMax) {
+                    Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null).entrance(item.key, seen)) {
+                        when (item) {
+                            is ChatItem.User -> UserBubble(item)
+                            is ChatItem.Assistant -> AssistantBlock(item)
+                            is ChatItem.Thinking -> ThinkingBlock(item)
+                            is ChatItem.Tool -> delegateRows[item.key]?.takeIf { it.isNotEmpty() }
+                                ?.let { DelegateCard(it, subagentActions) } ?: ToolRow(item)
+                            is ChatItem.Approval -> if (item.decided != null) ApprovalRecord(item)
+                            is ChatItem.Clarify -> if (item.answer != null) ClarifyRecord(item)
+                            is ChatItem.Secret -> if (item.outcome != null) SecretRecord(item)
+                            is ChatItem.Notice -> NoticeLine(item)
+                            is ChatItem.CommandOutput -> CommandOutputCard(item)
+                        }
                     }
                 }
             }
             if (thinking) item(key = "typing") {
-                Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null).entrance("typing", HashSet())) { TypingIndicator() }
+                ChatColumn(columnMax) {
+                    Box(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null).entrance("typing", HashSet())) { TypingIndicator() }
+                }
             }
         }
         AnimatedVisibility(!follow, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
@@ -860,6 +867,22 @@ private fun choiceLabel(choice: String) =
 /** Sticky panel above the composer while a command waits for the user: big targets, no hunting. */
 /** Widest a dock or the composer gets on a tablet: a readable line, not the full pane. */
 internal val DOCK_MAX_WIDTH = 760.dp
+
+/** Screen width (dp) from which the chat list shows beside the chat and Centered width applies. */
+const val WIDE_SCREEN_DP = 720
+
+/** Cap for the chat transcript column: [DOCK_MAX_WIDTH] when Centered on a wide screen, else null (full width). */
+fun chatColumnMaxWidth(width: ChatWidth, wideScreen: Boolean): Dp? =
+    if (width == ChatWidth.CENTERED && wideScreen) DOCK_MAX_WIDTH else null
+
+/** Centres one transcript row in a column of at most [max]; with a null [max] it is the row as-is. */
+@Composable
+private fun ChatColumn(max: Dp?, content: @Composable () -> Unit) {
+    if (max == null) content()
+    else Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.widthIn(max = max).fillMaxWidth()) { content() }
+    }
+}
 
 /**
  * Keeps the approval/question docks and the composer at a readable width on wide screens (tablet,

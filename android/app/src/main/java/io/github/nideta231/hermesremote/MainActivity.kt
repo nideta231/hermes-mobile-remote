@@ -107,6 +107,7 @@ import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.fillMaxWidth
 import io.github.nideta231.hermesremote.ui.SettingsActions
 import io.github.nideta231.hermesremote.ui.SettingsScreen
+import io.github.nideta231.hermesremote.ui.WIDE_SCREEN_DP
 import io.github.nideta231.hermesremote.ui.linkHealth
 import io.github.nideta231.hermesremote.data.QrImage
 import kotlinx.coroutines.Dispatchers
@@ -419,7 +420,7 @@ class MainActivity : ComponentActivity() {
         }
         if (showChat.value) { page = Page.CHAT; showChat.value = false; scope.launch { drawer.close() } }
 
-        val wide = LocalConfiguration.current.screenWidthDp >= 720
+        val wide = LocalConfiguration.current.screenWidthDp >= WIDE_SCREEN_DP
         val health = linkHealth(conn, system.error != null)
 
         fun go(p: Page) {
