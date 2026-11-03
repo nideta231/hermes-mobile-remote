@@ -19,6 +19,16 @@ request number.
   subagents (#12), share to Hermes (#15), message search (#16), subagent output and steer (#17)
   and bridge metrics (#18).
 
+## Unreleased
+
+- **Autopilot** (bridge only, new Additional feature, off by default): Hermes can work on its own while you are
+  away. A Hermes cron job checks every 20 minutes and starts a run only inside your work window (default 23:00 to
+  06:00) or after a while without a chat. Runs follow the shipped `autopilot` skill: files only in their own lab
+  folder, skills installed only from the official hub, unused skills disabled (never deleted), every step written
+  to a journal, and tasks you queue (missions) done first. A Guardian audits each finished run and pauses Autopilot
+  when a rule was broken. Turn it on with `hermes-remote-bridge extras autopilot=on`; the API is `/v1/autopilot/*`
+  (see docs/BRIDGE_API.md). The phone app is unchanged.
+
 ## v1.49.0
 
 - **Display settings** (*Settings > App > Appearance*): *Tool & thought display* switches between

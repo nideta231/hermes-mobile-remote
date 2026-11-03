@@ -204,9 +204,10 @@ def test_install_skills_copies_missing_only(tmp_path, monkeypatch):
     mine = tmp_path / "skills" / "productivity" / "personal-notes" / "SKILL.md"
     mine.parent.mkdir(parents=True)
     mine.write_text("my edits")
-    assert selfupdate.install_skills(log=lambda m: None) == ["project-blueprint"]
+    assert selfupdate.install_skills(log=lambda m: None) == ["project-blueprint", "autopilot"]
     assert mine.read_text() == "my edits"
     assert (tmp_path / "skills" / "software-development" / "project-blueprint" / "SKILL.md").exists()
+    assert (tmp_path / "scripts" / "autopilot_gate.sh").exists()
     assert selfupdate.install_skills(log=lambda m: None) == []
 
 

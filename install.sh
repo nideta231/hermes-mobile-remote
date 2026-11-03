@@ -86,6 +86,11 @@ SKILL_DST="$HERMES_HOME/skills/software-development/project-blueprint"
 if [[ ! -e "$SKILL_DST/SKILL.md" ]]; then
   mkdir -p "$SKILL_DST" && cp "$BRIDGE/skills/project-blueprint/SKILL.md" "$SKILL_DST/SKILL.md" && info "Hermes skill installed: project-blueprint"
 fi
+SKILL_DST="$HERMES_HOME/skills/autonomous-ai-agents/autopilot"
+if [[ ! -e "$SKILL_DST/SKILL.md" ]]; then
+  mkdir -p "$SKILL_DST" && cp "$BRIDGE/skills/autopilot/SKILL.md" "$SKILL_DST/SKILL.md" && info "Hermes skill installed: autopilot"
+fi
+"$BRIDGE/.venv/bin/hermes-remote-bridge" autopilot setup >/dev/null 2>&1 || true
 info "installed into $BRIDGE/.venv; command: hermes-remote-bridge"
 [[ ":$PATH:" == *":$LOCAL_BIN:"* ]] || info "Add $LOCAL_BIN to your PATH to use it without the full path."
 

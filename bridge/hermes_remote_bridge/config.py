@@ -100,6 +100,8 @@ class Config:
     library_dir: Path = STATE_DIR / "library"
     # Additional features the user switched on (phone Settings > Additional features); see extras.py.
     extras_file: Path = CONFIG_DIR / "extras.json"
+    # Autopilot keeps its settings, journal and run lock under <state_dir>/autopilot.
+    state_dir: Path = STATE_DIR
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":

@@ -28,11 +28,13 @@ EXTRAS: dict[str, tuple[str, tuple[str, ...]]] = {
     "notes": ("Notes", ("personal-notes",)),
     "blueprints": ("Blueprints", ("project-blueprint",)),
     "graph": ("Graph", ()),
+    "autopilot": ("Autopilot", ("autopilot",)),
 }
 # /v1/me features each extra brings (graph has none: the app draws it from the chat list).
 FEATURES: dict[str, tuple[str, ...]] = {
     "library": ("library",), "monitor": ("monitor", "claude_usage", "speedtest"),
     "terminal": ("terminal",), "notes": ("notes",), "blueprints": ("blueprints",), "graph": (),
+    "autopilot": ("autopilot",),
 }
 
 

@@ -4,3 +4,6 @@ __pycache__/
 .pytest_cache/
 *.json.tmp
 bridge/linux/hermes-remote-tray
+
+# Local work notes, reports and screenshots (never published)
+Data/

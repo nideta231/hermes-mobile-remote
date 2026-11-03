@@ -61,10 +61,10 @@ def test_sync_skills_disables_skills_of_off_features_and_keeps_the_users_own(tmp
             return R(json.dumps(conf[prof]))
         conf[prof] = json.loads(args[-1]); return R()
     monkeypatch.setattr(ex, "_hermes", fake)
-    assert ex.sync_skills(home / "bin", home, {"blueprints": True, "notes": False}) == []
+    assert ex.sync_skills(home / "bin", home, {"blueprints": True, "notes": False, "autopilot": True}) == []
     assert conf[None] == ["my-own", "personal-notes"] and conf["work"] == ["personal-notes"]
     calls.clear()
-    assert ex.sync_skills(home / "bin", home, {"blueprints": True, "notes": False}) == []
+    assert ex.sync_skills(home / "bin", home, {"blueprints": True, "notes": False, "autopilot": True}) == []
     assert all(a[:2] == ("config", "get") for _, a in calls)  # nothing to change: no writes
 
 
