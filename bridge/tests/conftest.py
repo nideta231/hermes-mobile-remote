@@ -17,4 +17,4 @@ from hermes_remote_bridge.config import CONFIG_DIR as _CONFIG_DIR  # noqa: E402 
 
 os.makedirs(_CONFIG_DIR, exist_ok=True)
 with open(os.path.join(_CONFIG_DIR, "extras.json"), "w") as _fh:
-    _json.dump({k: True for k in ("library", "monitor", "terminal", "notes", "blueprints", "graph", "autopilot")}, _fh)
+    _json.dump({k: True for k in ("library", "monitor", "terminal", "notes", "blueprints", "graph")}, _fh)

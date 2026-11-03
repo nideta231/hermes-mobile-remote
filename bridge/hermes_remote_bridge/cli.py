@@ -1013,15 +1013,6 @@ def cmd_extras(cfg: Config, args: argparse.Namespace) -> None:
         state, changed = store.set(changes)
         for p in ex.apply(cfg, state, changed):
             print(f"warning: {p}")
-        if "autopilot" in changed:
-            from . import autopilot as ap
-            if changed["autopilot"]:
-                ap.write_gate_script(cfg.hermes_home, sys.executable)
-            try:
-                print("Autopilot cron job:", ap.ensure_job_cli(cfg.hermes_bin, cfg.hermes_home,
-                                                              ap.Settings(cfg.state_dir).get(), changed["autopilot"]))
-            except ap.AutopilotError as exc:
-                print(f"warning: Autopilot cron job: {exc}")
         print("The running bridge picks this up on its next restart (the phone's switch applies at once).")
     state = store.get()
     if args.json:
@@ -1029,99 +1020,6 @@ def cmd_extras(cfg: Config, args: argparse.Namespace) -> None:
         return
     for k, (label, _) in ex.EXTRAS.items():
         print(f"{k:11} {'on ' if state[k] else 'off'}  {label}")
-
-
-def cmd_autopilot(cfg: Config, args: argparse.Namespace) -> None:
-    """Autopilot: the cron gate, and the commands Hermes uses while it runs unattended."""
-    from . import autopilot as ap
-    from .monitor import ClaudeUsage
-
-    on = _extra_on(cfg, "autopilot")
-    p = ap.paths(cfg.state_dir)
-    usage = ClaudeUsage(cfg.claude_credentials)
-    words = list(args.words or [])
-    act = args.action
-    if act == "gate":
-        _, out = ap.gate(cfg.state_dir, cfg.hermes_home, enabled=on, fetch_usage=usage.poll)
-        print(out)
-        return
-    if act == "setup":
-        path = ap.write_gate_script(cfg.hermes_home, sys.executable)
-        print(f"Gate script: {path}")
-        if on:
-            print("Cron job:", ap.ensure_job_cli(cfg.hermes_bin, cfg.hermes_home, ap.Settings(cfg.state_dir).get(), True))
-        return
-    if not on:
-        sys.exit("Autopilot is switched off on this PC (phone Settings > Additional features, "
-                 "or: hermes-remote-bridge extras autopilot=on).")
-    if act == "status":
-        st = ap.Settings(cfg.state_dir).get()
-        st["enabled"] = True
-        u = ap.cached_usage(p, usage.poll)
-        d = ap.decide(st, now=time.time(), last_active=ap.last_activity(cfg.hermes_home), usage=u,
-                      running=ap.run_state(p) is not None)
-        doc = {"settings": st, "decision": d, "run": ap.run_state(p), "stats": ap.stats(p)}
-        print(json.dumps(doc, indent=2) if args.json else f"{'would run' if d['wake'] else 'idle'}: {d['reason']}")
-    elif act == "check":
-        # Between steps of a run: keep going or stop now (paused by the user, or the user's own usage guard).
-        st = ap.Settings(cfg.state_dir).get()
-        guard = st["session_max"] < 100 or st["weekly_max"] < 100
-        s5, sw = ap.usage_numbers(ap.cached_usage(p, usage.poll)) if guard else (None, None)
-        if st.get("paused"):
-            print("STOP: paused by the user. Write a short `result` entry and end the run (`autopilot end`).")
-        elif s5 is not None and st["session_max"] < 100 and s5 >= st["session_max"]:
-            print("STOP: the user's usage guard applies. Log a result and end the run.")
-        elif sw is not None and st["weekly_max"] < 100 and sw >= st["weekly_max"]:
-            print("STOP: the user's usage guard applies. Log a result and end the run.")
-        else:
-            print("CONTINUE")
-    elif act == "log":
-        kind = args.kind or "note"
-        print(json.dumps(ap.log(p, kind, " ".join(words), title=args.title or "", files=args.file,
-                                session=os.environ.get("HERMES_SESSION_ID"))))
-    elif act == "end":
-        ap.log(p, "result", " ".join(words) or "Run finished", title=args.title or "Run finished",
-               session=os.environ.get("HERMES_SESSION_ID"))
-        ap.end_run(p)
-        print("Run ended.")
-    elif act in ("disable-skill", "enable-skill"):
-        if not words:
-            raise ValueError("Give the skill name, then why")
-        e = ap.set_skill(p, ap.cli_toggle(cfg.hermes_bin), words[0], act == "enable-skill", " ".join(words[1:]))
-        print(e["title"])
-    elif act == "skills":
-        for s in ap.skill_usage(cfg.hermes_home):
-            print(f"{s['name']:40} uses={s['uses']:<5} last={(s['last_used'] or '-')[:10]} by={s['created_by']}")
-    elif act == "journal":
-        for e in ap.journal(p, limit=args.limit):
-            print(f"{time.strftime('%m-%d %H:%M', time.localtime(e['ts']))} {e['kind']:7} {e.get('title') or ''} {e['text'][:150]}")
-    elif act == "lab":
-        print(ap.Settings(cfg.state_dir).get()["lab_dir"])
-        for x in ap.lab_projects(Path(ap.Settings(cfg.state_dir).get()["lab_dir"])):
-            print(f"  {x['name']:30} {x['summary']}")
-    elif act == "mission":
-        sub = words[0] if words else "list"
-        rest = words[1:]
-        if sub == "list":
-            for m in ap.missions(p):
-                print(f"{m['id']}  {m['state']:8} {m['text'][:100]}")
-        elif sub == "add":
-            print(ap.add_mission(p, " ".join(rest), by="cli")["id"])
-        elif sub in ("start", "done", "drop"):
-            if not rest:
-                raise ValueError("Give the mission id")
-            state = {"start": "active", "done": "done", "drop": "dropped"}[sub]
-            ap.set_mission(p, rest[0], state, " ".join(rest[1:]))
-            print(f"{rest[0]} {state}")
-        else:
-            raise ValueError("mission list | add <text> | start <id> | done <id> <result> | drop <id> <why>")
-    elif act == "settings":
-        changes = {}
-        for w in words:
-            k, _, v = w.partition("=")
-            changes[k] = v.lower() in ("true", "on", "yes") if k in ("paused",) else v
-        st = ap.Settings(cfg.state_dir).set(changes) if changes else ap.Settings(cfg.state_dir).get()
-        print(json.dumps(st, indent=2))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1192,15 +1090,6 @@ def main(argv: list[str] | None = None) -> None:
     xp = sub.add_parser("extras", help="Additional features on this PC: list, or switch e.g. monitor=on notes=off")
     xp.add_argument("changes", nargs="*", help="key=on|off (library monitor terminal notes blueprints graph)")
     xp.add_argument("--json", action="store_true")
-    apl = sub.add_parser("autopilot", help="Autopilot: Hermes works on its own while the PC is idle")
-    apl.add_argument("action", choices=("gate", "setup", "status", "check", "log", "end", "disable-skill", "enable-skill",
-                                        "skills", "journal", "lab", "settings", "mission"))
-    apl.add_argument("words", nargs="*", help="log/end: text; *-skill: name + why; settings: key=value")
-    apl.add_argument("--kind", choices=("plan", "action", "learn", "build", "skill", "result", "note", "error"))
-    apl.add_argument("--title")
-    apl.add_argument("--file", action="append", help="log: a file this entry is about (repeatable)")
-    apl.add_argument("--limit", type=int, default=30)
-    apl.add_argument("--json", action="store_true")
     lb = sub.add_parser("library", help="Memory Library: Hermes' own memory on a private Postgres")
     lb.add_argument("action", choices=("status", "plan", "install", "enable", "disable", "remove", "doctor", "settings",
                                        "list", "search", "add", "show", "edit", "bump", "stats", "path"))
@@ -1249,7 +1138,7 @@ def main(argv: list[str] | None = None) -> None:
                "trust": cmd_trust, "doctor": cmd_doctor, "firewall": cmd_firewall,
                "supervise": cmd_supervise, "metrics": cmd_metrics, "update": cmd_update,
                "notes": cmd_notes, "blueprint": cmd_blueprint, "library": cmd_library,
-               "extras": cmd_extras, "autopilot": cmd_autopilot}[args.command]
+               "extras": cmd_extras}[args.command]
     extra = {"notes": "notes", "blueprint": "blueprints", "library": "library"}.get(args.command)
     if extra and not _extra_on(cfg, extra) and not (args.command == "blueprint" and getattr(args, "action", None) == "list"):
         from .extras import EXTRAS

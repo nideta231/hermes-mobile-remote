@@ -45,7 +45,6 @@ from . import funnel as funnel_mod
 from . import library as lib_mod
 from . import library_store as lib_store
 from . import extras as extras_mod
-from . import autopilot as ap_mod
 from .local_api import devices_doc, pairing_payload, pairing_uri, qr_png, trust_doc
 from .network import TrustStore, current_network, network_info, serving_lan_ips
 from .chat_files import referenced_file
@@ -640,7 +639,6 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
                                               ("admin", cfg.remote_admin),
                                               ("parked", cfg.remote_admin),
                                               ("library", cfg.library),
-                                              ("autopilot", True),
                                               ("extras", True)) if on and f not in extras_mod.features_off(extras.get())],
                 "bridge_version": __version__, "protocol": PROTOCOL}
 
@@ -1620,197 +1618,10 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
             raise ApiError(404, "monitor_off", OFF_HINT.format("PC monitor"))
         return monitor
 
-
-    # ------------------------------------------------------------ Autopilot
-    # Hermes works on its own while the PC is idle (see autopilot.py). Off = the cron job is paused,
-    # the routes refuse, and nothing is polled for it.
-    ap_paths = ap_mod.paths(cfg.state_dir)
-    ap_settings = ap_mod.Settings(cfg.state_dir)
-    ap_usage = ClaudeUsage(cfg.claude_credentials)  # only read when the user sets a usage guard
-
-    def need_autopilot() -> None:
-        if not extras.on("autopilot"):
-            raise ApiError(404, "autopilot_off", OFF_HINT.format("Autopilot"))
-
-    async def autopilot_job(on: bool) -> list[str]:
-        """Create/resume (on) or pause (off) Hermes' Autopilot cron job through Hermes' own API."""
-        try:
-            job = await asyncio.to_thread(ap_mod.find_job, cfg.hermes_home)
-            if job is None and on:
-                if not ap_mod.gate_script_path(cfg.hermes_home).exists():
-                    return ["Autopilot's gate script is missing: run `hermes-remote-bridge autopilot setup` on the PC once"]
-                await hermes_http("POST", "/api/cron/jobs", json={**ap_mod.job_payload(ap_settings.get()),
-                                                                  "failure_deliver": "local"}, params={"profile": "default"})
-            elif job is not None and bool(job.get("enabled")) != on:
-                await hermes_http("POST", f"/api/cron/jobs/{job['id']}/{'resume' if on else 'pause'}", params={"profile": "default"})
-        except ApiError as exc:
-            return [f"Autopilot cron job: {exc.message}"]
-        return []
-
-    def _autopilot_doc() -> dict:
-        st = ap_settings.get()
-        st["enabled"] = True
-        guard = st["session_max"] < 100 or st["weekly_max"] < 100
-        usage = ap_mod.cached_usage(ap_paths, ap_usage.poll) if guard else None
-        decision = ap_mod.decide(st, now=time.time(), last_active=ap_mod.last_activity(cfg.hermes_home), usage=usage,
-                                 running=ap_mod.run_state(ap_paths) is not None)
-        job = ap_mod.find_job(cfg.hermes_home)
-        return {"settings": st, "decision": decision, "run": ap_mod.run_state(ap_paths), "stats": ap_mod.stats(ap_paths),
-                "usage": {k: (usage or {}).get(k) for k in ("session", "weekly", "session_resets_at", "weekly_resets_at", "plan")},
-                "job": {k: job.get(k) for k in ("id", "enabled", "state", "next_run_at", "last_run_at", "last_status", "last_error")} if job else None,
-                "gate_installed": ap_mod.gate_script_path(cfg.hermes_home).exists(),
-                "lab": ap_mod.lab_projects(Path(st["lab_dir"]), 30), "disabled_skills": ap_mod.disabled_by_autopilot(ap_paths)}
-
-    @app.get("/v1/autopilot")
-    async def autopilot_status(_: Device = Depends(device_auth)):
-        need_autopilot()
-        return await asyncio.to_thread(_autopilot_doc)
-
-    @app.put("/v1/autopilot/settings")
-    async def autopilot_settings(request: Request, device: Device = Depends(device_auth)):
-        need_autopilot()
-        body = await request.json() if await request.body() else {}
-        body = {k: v for k, v in (body if isinstance(body, dict) else {}).items() if k not in ("enabled", "manual_until")}
-        try:
-            st = ap_settings.set(body)
-        except ap_mod.AutopilotError as exc:
-            raise ApiError(400, "bad_autopilot_settings", str(exc))
-        if "every_minutes" in body:
-            job = await asyncio.to_thread(ap_mod.find_job, cfg.hermes_home)
-            if job:
-                with contextlib.suppress(ApiError):
-                    await hermes_http("PUT", f"/api/cron/jobs/{job['id']}", json={"schedule": f"every {st['every_minutes']}m"},
-                                      params={"profile": "default"})
-        audit_event({"event": "autopilot_settings", "device": device.name, "keys": sorted(body)})
-        return await asyncio.to_thread(_autopilot_doc)
-
-    @app.post("/v1/autopilot/run")
-    async def autopilot_run_now(device: Device = Depends(device_auth)):
-        """Start a run now (skips the time/idle check for two hours, never the usage limits)."""
-        need_autopilot()
-        ap_settings.set({"manual_until": int(time.time()) + 7200, "paused": False})
-        problems = await autopilot_job(True)
-        job = await asyncio.to_thread(ap_mod.find_job, cfg.hermes_home)
-        if job:
-            await hermes_http("POST", f"/api/cron/jobs/{job['id']}/trigger", params={"profile": "default"})
-        audit_event({"event": "autopilot_run", "device": device.name})
-        return {**(await asyncio.to_thread(_autopilot_doc)), "problems": problems}
-
-    @app.post("/v1/autopilot/stop")
-    async def autopilot_stop(device: Device = Depends(device_auth)):
-        """Pause Autopilot: no new runs until resumed; a run in progress is told to stop at its next step."""
-        need_autopilot()
-        ap_settings.set({"paused": True, "manual_until": 0})
-        if ap_mod.run_state(ap_paths):
-            ap_mod.log(ap_paths, "stop", "Paused from the phone", title="Stop requested")
-        audit_event({"event": "autopilot_stop", "device": device.name})
-        return await asyncio.to_thread(_autopilot_doc)
-
-    @app.post("/v1/autopilot/resume")
-    async def autopilot_resume(device: Device = Depends(device_auth)):
-        need_autopilot()
-        ap_settings.set({"paused": False})
-        audit_event({"event": "autopilot_resume", "device": device.name})
-        return await asyncio.to_thread(_autopilot_doc)
-
-    @app.get("/v1/autopilot/journal")
-    async def autopilot_journal(since: float = 0, limit: int = 100, kind: str = "", _: Device = Depends(device_auth)):
-        need_autopilot()
-        kinds = [k for k in kind.split(",") if k] or None
-        return {"entries": await asyncio.to_thread(ap_mod.journal, ap_paths, limit=max(1, min(limit, 500)), since=since, kinds=kinds)}
-
-    @app.get("/v1/autopilot/live")
-    async def autopilot_live(after: int = 0, since: float = 0, wait: float = 0, _: Device = Depends(device_auth)):
-        """Long-poll the current run: new steps of the newest Autopilot session after message id
-        `after`, and journal entries newer than `since`. Waits up to `wait` (max 25) seconds for news."""
-        need_autopilot()
-        deadline = time.monotonic() + max(0.0, min(wait, 25.0))
-        while True:
-            job = await asyncio.to_thread(ap_mod.find_job, cfg.hermes_home)
-            live = await asyncio.to_thread(ap_mod.live_steps, cfg.hermes_home, job and job.get("id"), max(0, after))
-            entries = await asyncio.to_thread(ap_mod.journal, ap_paths, limit=100, since=since) if since > 0 else []
-            if live["steps"] or entries or time.monotonic() >= deadline:
-                return {**live, "run": ap_mod.run_state(ap_paths), "entries": entries}
-            await asyncio.sleep(1.0)
-
-    @app.get("/v1/autopilot/skills")
-    async def autopilot_skills(_: Device = Depends(device_auth)):
-        need_autopilot()
-        usage = await asyncio.to_thread(ap_mod.skill_usage, cfg.hermes_home)
-        disabled = set(await asyncio.to_thread(extras_mod.disabled_skills, cfg.hermes_bin, None))
-        return {"skills": [dict(s, enabled=s["name"] not in disabled) for s in usage],
-                "disabled_by_autopilot": ap_mod.disabled_by_autopilot(ap_paths)}
-
-    @app.post("/v1/autopilot/skills/{name}")
-    async def autopilot_skill_toggle(name: str, request: Request, device: Device = Depends(device_auth)):
-        """Re-enable (or disable) one skill from the phone. Goes through Hermes' own config writer."""
-        need_autopilot()
-        body = await request.json() if await request.body() else {}
-        enable = bool(body.get("enabled", True)) if isinstance(body, dict) else True
-        why = str(body.get("why") or "From the phone") if isinstance(body, dict) else "From the phone"
-        try:
-            name = ap_mod.check_skill(name, enable, why)
-        except ap_mod.AutopilotError as exc:
-            raise ApiError(400, "bad_skill", str(exc))
-        await hermes_http("PUT", "/api/skills/toggle", json={"name": name, "enabled": enable})
-        entry = ap_mod.log(ap_paths, "skill", why, title=f"{'Enabled' if enable else 'Disabled'} skill {name}",
-                           data={"op": "enable" if enable else "disable", "skill": name, "by": "phone"})
-        audit_event({"event": "autopilot_skill", "device": device.name, "skill": name, "enabled": enable})
-        return {"entry": entry}
-
-    @app.get("/v1/autopilot/lab/{project}")
-    async def autopilot_lab_project(project: str, _: Device = Depends(device_auth)):
-        """One lab project: its file list and README (text only)."""
-        need_autopilot()
-        try:
-            return await asyncio.to_thread(ap_mod.lab_project, Path(ap_settings.get()["lab_dir"]), project)
-        except ap_mod.AutopilotError as exc:
-            raise ApiError(404, "lab_not_found", str(exc))
-
-    @app.get("/v1/autopilot/missions")
-    async def autopilot_missions(_: Device = Depends(device_auth)):
-        need_autopilot()
-        return {"missions": list(reversed(ap_mod.missions(ap_paths)))}
-
-    @app.post("/v1/autopilot/missions")
-    async def autopilot_add_mission(request: Request, device: Device = Depends(device_auth)):
-        """Queue a task for Autopilot's next run(s): {"text": "..."}."""
-        need_autopilot()
-        body = await request.json() if await request.body() else {}
-        try:
-            m = ap_mod.add_mission(ap_paths, str((body or {}).get("text") or ""), by=device.name)
-        except ap_mod.AutopilotError as exc:
-            raise ApiError(400, "bad_mission", str(exc))
-        audit_event({"event": "autopilot_mission", "device": device.name, "mission": m["id"]})
-        return {"mission": m}
-
-    @app.post("/v1/autopilot/missions/{mid}/{action}")
-    async def autopilot_mission_action(mid: str, action: str, device: Device = Depends(device_auth)):
-        """drop (cancel) or requeue a mission from the phone."""
-        need_autopilot()
-        state = {"drop": "dropped", "requeue": "queued"}.get(action)
-        if state is None:
-            raise ApiError(404, "not_found", f"Unknown mission action: {action}")
-        try:
-            m = ap_mod.set_mission(ap_paths, mid, state, "Cancelled from the phone" if state == "dropped" else "")
-        except ap_mod.AutopilotError as exc:
-            raise ApiError(404, "mission_not_found", str(exc))
-        audit_event({"event": f"autopilot_mission_{action}", "device": device.name, "mission": mid})
-        return {"mission": m}
-
-    @app.get("/v1/autopilot/lab/{project}/file")
-    async def autopilot_lab_file(project: str, path: str = "", _: Device = Depends(device_auth)):
-        """One text file of a lab project (read only, inside the project, no dotfiles)."""
-        need_autopilot()
-        try:
-            return await asyncio.to_thread(ap_mod.lab_file, Path(ap_settings.get()["lab_dir"]), project, path)
-        except ap_mod.AutopilotError as exc:
-            raise ApiError(404, "lab_not_found", str(exc))
-
     # ------------------------------------------------------------ additional features
     def _extras_doc(problems: list[str] | None = None) -> dict:
         available = {"library": cfg.library, "monitor": monitor is not None, "terminal": cfg.terminal,
-                     "notes": cfg.notes, "blueprints": cfg.blueprints, "graph": True, "autopilot": True}
+                     "notes": cfg.notes, "blueprints": cfg.blueprints, "graph": True}
         return {"extras": extras_mod.describe(extras.get(), available), "problems": problems or []}
 
     @app.get("/v1/extras")
@@ -1826,8 +1637,6 @@ def create_app(cfg: Config, *, locator: BackendLocator | None = None, tailnet: T
         except ValueError as exc:
             raise ApiError(400, "bad_extras", str(exc))
         problems = await asyncio.to_thread(extras_mod.apply, cfg, state, changed, monitor) if changed else []
-        if "autopilot" in changed:
-            problems += await autopilot_job(changed["autopilot"])
         audit_event({"event": "extras", "device": device.name, "changed": changed, "problems": len(problems)})
         return _extras_doc(problems)
 

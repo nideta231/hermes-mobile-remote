@@ -461,29 +461,6 @@ The desktop app manages the bridge through these routes. They are not for the ph
 | POST | `/v1/local/untrust` | Body `{id}`. Removes that trusted network. |
 | GET | `/v1/local/doctor` | Doctor report (`doctor --json`). |
 
-## Autopilot (feature `autopilot`, Additional feature, off by default)
-
-Hermes works unattended while the PC is idle. All routes answer `404 autopilot_off` while the switch is off.
-
-| Route | What |
-|---|---|
-| `GET /v1/autopilot` | `settings`, `decision` (`wake`, `reason`, `checks`), current `run`, `stats`, `usage`, cron `job`, `lab` projects, `disabled_skills` |
-| `PUT /v1/autopilot/settings` | any of `paused`, `window_start`, `window_end` (`HH:MM`), `idle_minutes`, `every_minutes`, `lab_dir`, `focus`, and an optional usage guard `session_max` / `weekly_max` (percent, 100 = off, the default) |
-| `POST /v1/autopilot/run` | run now: skips the time/idle check for 2 h (never a usage guard), triggers the cron job |
-| `POST /v1/autopilot/stop` / `resume` | pause / resume; a running agent sees `STOP` at its next `autopilot check` |
-| `GET /v1/autopilot/journal?since=&limit=&kind=` | journal entries, newest first (`start plan action learn build skill result stop error note`) |
-| `GET /v1/autopilot/live?after=&since=&wait=` | long-poll the current run: newest Autopilot session's steps after message id `after` (tool name + one-line summary, assistant text; never tool output), journal entries newer than `since`, waits up to `wait` s (max 25) for news; returns `cursor` |
-| `GET /v1/autopilot/skills` | every skill with uses, last used, enabled; plus the ones Autopilot disabled |
-| `POST /v1/autopilot/skills/{name}` | `{"enabled": true}` re-enables (or `false` + `why` disables) through Hermes' `/api/skills/toggle` |
-| `GET /v1/autopilot/missions` / `POST` `{"text"}` | tasks the user queues; each run does the active or oldest queued one first |
-| `POST /v1/autopilot/missions/{id}/drop` / `requeue` | cancel or requeue a mission |
-| `GET /v1/autopilot/lab/{project}` | file list + README of one lab project |
-| `GET /v1/autopilot/lab/{project}/file?path=` | one text file of a lab project (read only, max 200 KB, no dotfiles, never outside the project) |
-
-CLI (Hermes uses it during a run): `hermes-remote-bridge autopilot gate|setup|status|check|log|end|disable-skill|enable-skill|skills|journal|lab|settings`.
-State: `~/.local/state/hermes-remote/autopilot/` (settings, journal, usage cache, run lock). The gate script is
-`$HERMES_HOME/scripts/autopilot_gate.sh` (written by install/update/`autopilot setup`).
-
 ## Known limitations
 
 - **Smart approval mostly decides on its own.** With `approvals.mode: smart`, an approval request
