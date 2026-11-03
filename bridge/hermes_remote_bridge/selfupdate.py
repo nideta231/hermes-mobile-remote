@@ -554,8 +554,7 @@ def apply(remote: str = "origin", log=print) -> str:
 
 
 # Hermes skills the bridge ships: (folder in bridge/skills, category under $HERMES_HOME/skills).
-SKILLS = (("personal-notes", "productivity"), ("project-blueprint", "software-development"),
-          ("autopilot", "autonomous-ai-agents"))
+SKILLS = (("personal-notes", "productivity"), ("project-blueprint", "software-development"))
 
 
 def install_skills(log=print) -> list[str]:
@@ -579,11 +578,6 @@ def install_skills(log=print) -> list[str]:
                 log(f"Could not install the {name} skill: {exc}")
     if done:
         log("Installed Hermes skills: " + ", ".join(done))
-    try:  # Autopilot's cron gate lives in Hermes' scripts folder, which the service sandbox can't write
-        from . import autopilot as ap
-        ap.write_gate_script(home, sys.executable)
-    except OSError as exc:
-        log(f"Could not write the Autopilot gate script: {exc}")
     return done
 
 
